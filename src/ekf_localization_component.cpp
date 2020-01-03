@@ -217,7 +217,7 @@ namespace kalman_filter_localization
         Q = Q * (dt_imu * dt_imu);
 
         // L
-        Eigen::MatrixXd L = Eigen::MatrixXd::Zero(6,9);
+        Eigen::MatrixXd L = Eigen::MatrixXd::Zero(9,6);
         L.block<3,3>(3, 0) = Eigen::MatrixXd::Identity(3,3);
         L.block<3,3>(6, 3) = Eigen::MatrixXd::Identity(3,3);
 
@@ -241,6 +241,7 @@ namespace kalman_filter_localization
      */
     void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg)
     {
+        std::cout << "measurementUpdate" << std::endl;
         // error state
         current_stamp_ = input_pose_msg.header.stamp;
         Eigen::MatrixXd R = var_gnss_ * Eigen::MatrixXd::Identity(3,3);
