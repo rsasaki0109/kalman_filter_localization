@@ -51,6 +51,7 @@ extern "C" {
 #include <Eigen/Core>
 //#include <Eigen/Dense>
 
+
 namespace kalman_filter_localization
 {
     class EkfLocalizationComponent: public rclcpp::Node
@@ -59,17 +60,21 @@ namespace kalman_filter_localization
         KFL_EKFL_PUBLIC
         explicit EkfLocalizationComponent(const rclcpp::NodeOptions & options);
     private:
+        std::string reference_frame_id_;
         std::string initial_pose_topic_;
         std::string imu_topic_;
         std::string odom_topic_;
         std::string gnss_pose_topic_;
+        double frequency_pub_;
         int num_state_;
         int num_error_state_;
         int num_obs_;
         double var_imu_w_;
         double var_imu_acc_;
+        double var_gnss_;
         bool initial_pose_recieved_;
         double previous_time_imu_;
+        rclcpp::Time current_stamp_;
         Eigen::VectorXd x_;
         Eigen::MatrixXd P_;
         Eigen::Vector3d gravity_;
@@ -78,11 +83,13 @@ namespace kalman_filter_localization
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_odom_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
+        rclcpp::TimerBase::SharedPtr timer_;
         void predictUpdate(const sensor_msgs::msg::Imu input_imu_msg);
         void measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg);
+        void broadcastPose();
         geometry_msgs::msg::PoseStamped current_pose_;
         enum STATE{
-          X = 0,  Y = 1,  Z = 2,
+          X  = 0,  Y = 1,  Z = 2,
           VX = 3, VY = 4, VZ = 5,
           QX = 6, QY = 7, QZ = 8, QW = 9,
         };
