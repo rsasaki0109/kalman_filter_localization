@@ -1,20 +1,25 @@
 # Kalman Filter Localization  
-Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/(Odom/VO/LO).
+Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odom(Visual Odom/Lidar Odom).
 
 ## node
 kalman_filter_localization
 - input  
 /gnss_pose  (PoseStamed)   
 /imu  (Imu)  
-/odom (PoseStamped) (Unimplemented)
+/odom (PoseStamped)  
 - output  
 /curent_pose (PoseStamped)
 
 ## params
 
-var_gnss  
-var_imu_v  
-var_imu_acc  
+|Name|Type|Default value|Description|
+|---|---|---|---|
+|var_gnss|double|0.1|variance of a gnss receiver[m]|
+|var_odom|double|0.1|variance of an odometry[m]|
+|var_imu_w|double|0.01|variance of an angular velocity sensor[deg/sec]|
+|var_imu_acc|double|0.01|variance of an accelerometer[m^2/sec]|
+|use_gnss|bool|true|whether gnss is used or not |
+|use_odom|bool|false|whether odom(lo/vo) is used or not |
 
 ## demo
 

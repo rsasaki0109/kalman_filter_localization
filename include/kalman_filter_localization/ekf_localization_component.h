@@ -72,6 +72,9 @@ namespace kalman_filter_localization
         double var_imu_w_;
         double var_imu_acc_;
         double var_gnss_;
+        double var_odom_;
+        bool use_gnss_;
+        bool use_odom_;
         bool initial_pose_recieved_;
         double previous_time_imu_;
         rclcpp::Time current_stamp_;
@@ -85,7 +88,7 @@ namespace kalman_filter_localization
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
         void predictUpdate(const sensor_msgs::msg::Imu input_imu_msg);
-        void measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg);
+        void measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg, const double variance);
         void broadcastPose();
         geometry_msgs::msg::PoseStamped current_pose_;
         enum STATE{

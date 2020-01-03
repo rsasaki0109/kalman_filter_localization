@@ -32,6 +32,12 @@ namespace kalman_filter_localization
         get_parameter("var_imu_acc",var_imu_acc_);
         declare_parameter("var_gnss",0.1);
         get_parameter("var_gnss",var_gnss_);
+        declare_parameter("var_odom",0.1);
+        get_parameter("var_odom",var_odom_);
+        declare_parameter("use_gnss",true);
+        get_parameter("use_gnss",use_gnss_);
+        declare_parameter("use_odom",false);
+        get_parameter("use_odom",use_odom_);
 
         set_on_parameters_set_callback(
         [this](const std::vector<rclcpp::Parameter> params) -> rcl_interfaces::msg::SetParametersResult 
@@ -136,14 +142,16 @@ namespace kalman_filter_localization
         auto odom_callback =
         [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
         {
-            std::cout << msg->header.stamp.sec << std::endl;
+            if(initial_pose_recieved_ && use_odom_){
+                measurementUpdate(*msg, var_odom_); 
+            }    
         };
 
         auto gnss_pose_callback =
         [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
         {
-            if(initial_pose_recieved_){
-                measurementUpdate(*msg); 
+            if(initial_pose_recieved_ && use_gnss_){
+                measurementUpdate(*msg, var_gnss_); 
             }    
         };
 
@@ -245,11 +253,11 @@ namespace kalman_filter_localization
      * 
      * P_k = (I - KH)*P_{k-1} 
      */
-    void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg)
+    void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg, const double variance)
     {
         // error state
         current_stamp_ = input_pose_msg.header.stamp;
-        Eigen::MatrixXd R = var_gnss_ * Eigen::MatrixXd::Identity(3,3);
+        Eigen::MatrixXd R = variance * Eigen::MatrixXd::Identity(3,3);
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3, num_error_state_);
         H.block<3,3>(0, 0) =  Eigen::MatrixXd::Identity(3,3);
         Eigen::MatrixXd K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse(); 
