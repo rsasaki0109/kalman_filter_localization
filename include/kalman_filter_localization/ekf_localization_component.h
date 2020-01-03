@@ -48,6 +48,9 @@ extern "C" {
 #include <tf2_eigen/tf2_eigen.h>
 #include <rclcpp_components/register_node_macro.hpp>
 
+#include <Eigen/Core>
+//#include <Eigen/Dense>
+
 namespace kalman_filter_localization
 {
     class EkfLocalizationComponent: public rclcpp::Node
@@ -63,7 +66,13 @@ namespace kalman_filter_localization
         int num_state_;
         int num_error_state_;
         int num_obs_;
+        double var_imu_w_;
+        double var_imu_acc_;
         bool initial_pose_recieved_;
+        double previous_time_imu_;
+        Eigen::VectorXd x_;
+        Eigen::MatrixXd P_;
+        Eigen::Vector3d gravity_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_odom_;
@@ -72,7 +81,11 @@ namespace kalman_filter_localization
         void predictUpdate(const sensor_msgs::msg::Imu input_imu_msg);
         void measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg);
         geometry_msgs::msg::PoseStamped current_pose_;
-        Eigen::Matrix4f initial_pose_;
+        enum STATE{
+          X = 0,  Y = 1,  Z = 2,
+          VX = 3, VY = 4, VZ = 5,
+          QX = 6, QY = 7, QZ = 8, QW = 9,
+        };
     };
 }
 
