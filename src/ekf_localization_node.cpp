@@ -1,5 +1,4 @@
 #include <kalman_filter_localization/ekf_localization_component.h>
-//#include <ekf_localization_component.h>
 
 int main(int argc, char *argv[])
 {
