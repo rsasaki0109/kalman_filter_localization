@@ -1,4 +1,6 @@
 #include <kalman_filter_localization/ekf_localization_component.h>
+#include <chrono>
+using namespace std::chrono_literals;
 
 namespace kalman_filter_localization
 {
@@ -6,6 +8,8 @@ namespace kalman_filter_localization
     : Node("ekf_localization", options)
     {
         /* Static Parameters */
+        declare_parameter("reference_frame_id","map");
+        get_parameter("reference_frame_id",reference_frame_id_);
         declare_parameter("initial_pose_topic",get_name() + std::string("/initial_pose"));
         get_parameter("initial_pose_topic",initial_pose_topic_);
         declare_parameter("imu_topic",get_name() + std::string("/imu"));
@@ -16,6 +20,8 @@ namespace kalman_filter_localization
         get_parameter("gnss_pose_topic",gnss_pose_topic_);
 
         /* Dynamic Parameters */
+        declare_parameter("frequency_pub",0.01);
+        get_parameter("frequency_pub",frequency_pub_);
         declare_parameter("num_state",10);
         get_parameter("num_state",num_state_);
         declare_parameter("num_error_state",9);
@@ -24,6 +30,8 @@ namespace kalman_filter_localization
         get_parameter("var_imu_w",var_imu_w_);
         declare_parameter("var_imu_acc",0.01);
         get_parameter("var_imu_acc",var_imu_acc_);
+        declare_parameter("var_gnss",0.1);
+        get_parameter("var_gnss",var_gnss_);
 
         set_on_parameters_set_callback(
         [this](const std::vector<rclcpp::Parameter> params) -> rcl_interfaces::msg::SetParametersResult 
@@ -86,7 +94,7 @@ namespace kalman_filter_localization
         /* Init */
         previous_time_imu_ = -1;
         x_ = Eigen::VectorXd::Zero(num_state_);
-        P_ = Eigen::MatrixXd::Zero(num_error_state_,num_error_state_);
+        P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_);//todo:cross var
         gravity_ << 0,0,-9.81;
 
         /* Setup Publisher */
@@ -128,7 +136,7 @@ namespace kalman_filter_localization
         {
             if(initial_pose_recieved_){
                 measurementUpdate(*msg);
-                current_pose_pub_->publish(current_pose_);   
+                //current_pose_pub_->publish(current_pose_);   
             }    
         };
 
@@ -144,6 +152,7 @@ namespace kalman_filter_localization
         sub_gnss_pose_ = 
             create_subscription<geometry_msgs::msg::PoseStamped>(gnss_pose_topic_, 1,
                 gnss_pose_callback);
+        timer_ = create_wall_timer(0.01s, std::bind(&EkfLocalizationComponent::broadcastPose, this));
     }   
 
     /* states
@@ -159,7 +168,9 @@ namespace kalman_filter_localization
      */
     void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu input_imu_msg)
     {
-        std::cout << "predictUpdate" << std::endl;
+        current_stamp_ = input_imu_msg.header.stamp;
+
+        // dt_imu
         double current_time_imu = input_imu_msg.header.stamp.sec 
                                     + input_imu_msg.header.stamp.nanosec * 1e-9;
         if(previous_time_imu_ == -1){
@@ -168,7 +179,8 @@ namespace kalman_filter_localization
         }
         double dt_imu = current_time_imu - previous_time_imu_;
         previous_time_imu_ = current_time_imu;
-        std::cout << "dt_imu:" << dt_imu << std::endl;
+        
+        // state
         Eigen::Quaterniond previous_quat = Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
         Eigen::MatrixXd rot_mat = previous_quat.toRotationMatrix();
         Eigen::Vector3d acc = Eigen::Vector3d(input_imu_msg.linear_acceleration.x, input_imu_msg.linear_acceleration.y, input_imu_msg.linear_acceleration.z);
@@ -228,9 +240,40 @@ namespace kalman_filter_localization
      */
     void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg)
     {
-        //std::cout << "measurementUpdate" << std::endl;
-        //std::cout << input_pose_msg.header.stamp.sec << std::endl;
+        // error state
+        current_stamp_ = input_pose_msg.header.stamp;
+        Eigen::MatrixXd R = var_gnss_ * Eigen::MatrixXd::Identity(3,3);
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3,9);
+        H.block<3,3>(0, 0) =  Eigen::MatrixXd::Identity(3,3);
+        Eigen::MatrixXd K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse(); 
+        Eigen::Vector3d y = Eigen::Vector3d(input_pose_msg.pose.position.x, input_pose_msg.pose.position.y, input_pose_msg.pose.position.z);
+        Eigen::VectorXd dx = K *(y - x_.segment(STATE::X, STATE::Z));
 
+        // state
+        x_.segment(STATE::X, STATE::Z) = x_.segment(STATE::X, STATE::Z) + dx.segment(STATE::X, STATE::Z);
+        x_.segment(STATE::VX, STATE::VZ) = x_.segment(STATE::VX, STATE::VZ) + dx.segment(STATE::VX, STATE::VZ);
+        double norm_quat = dx.segment(STATE::QX, STATE::QW).norm();
+        if (norm_quat < 1e-10) x_.segment(STATE::QX, STATE::QW) = Eigen::Vector4d(cos(norm_quat/2), 0, 0, 0);
+        else x_.segment(STATE::QX, STATE::QW) = Eigen::Vector4d(cos(norm_quat/2), sin(norm_quat/2) * dx(STATE::QX)/norm_quat,
+                                                 sin(norm_quat/2) * dx(STATE::QY)/norm_quat, sin(norm_quat/2) * dx(STATE::QZ)/norm_quat);
+
+        P_ = (Eigen::MatrixXd::Identity(9,9) - K*H) * P_;
+
+        return;
+    }
+
+    void EkfLocalizationComponent::broadcastPose()
+    {
+        current_pose_.header.stamp = current_stamp_;
+        current_pose_.header.frame_id = reference_frame_id_;
+        current_pose_.pose.position.x = x_(STATE::X);
+        current_pose_.pose.position.y = x_(STATE::Y);
+        current_pose_.pose.position.z = x_(STATE::Z);
+        current_pose_.pose.orientation.x = x_(STATE::QX);
+        current_pose_.pose.orientation.y = x_(STATE::QY);
+        current_pose_.pose.orientation.z = x_(STATE::QZ);
+        current_pose_.pose.orientation.w = x_(STATE::QW);
+        current_pose_pub_->publish(current_pose_);   
         return;
     }
 }
