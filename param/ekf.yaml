@@ -1,5 +1,7 @@
 ekf_localization:
     ros__parameters:
       gnss_pose_topic_: "gnss_pose"
-      num_state: 9
-      num_obs: 3 
+      imu_topic_: "imu"
+      var_imu_w_: 0.01
+      var_imu_acc_: 0.01
+      var_gnss_: 0.1
