@@ -1,5 +1,5 @@
 # Kalman Filter Localization  
-Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odom(Visual Odom/Lidar Odom).
+Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odometry(Visual Odometry/Lidar Odometry).
 
 ## node
 kalman_filter_localization
@@ -8,7 +8,7 @@ kalman_filter_localization
 /imu  (sensor_msgs/Imu)  
 /odom (geometry_msgs/PoseStamped)  
 - output  
-/curent_pose (PoseStamped)
+/curent_pose (geometry_msgs/PoseStamped)
 
 ## params
 
@@ -25,8 +25,9 @@ kalman_filter_localization
 
 [rosbag demo data](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
 
+
 ```
-ros2 bag play -s rosbag_v2 test.bag
+ros2 run kalman_filter_localization ekf_localization_node /ekf_localization/gnss_pose:=/gnss_pose /ekf_localization/imu:=/imu
 ```
 
 ```
@@ -34,7 +35,8 @@ ros2 topic pub ekf_localization/initial_pose geometry_msgs/PoseStamped '{header:
 ```
 
 ```
-ros2 run kalman_filter_localization ekf_localization_node /ekf_localization/gnss_pose:=/gnss_pose /ekf_localization/imu:=/imu
+ros2 bag play -s rosbag_v2 test.bag
 ```
+
 
 ![demo](./images/demo_ekfl.gif)    
