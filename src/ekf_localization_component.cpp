@@ -111,9 +111,9 @@ namespace kalman_filter_localization
             std::cout << "initial pose callback" << std::endl;
             initial_pose_recieved_ = true;
             current_pose_ = *msg;
-            x_(STATE::X) = 0;//current_pose_.pose.position.x;
-            x_(STATE::Y) = 1;//current_pose_.pose.position.y;
-            x_(STATE::Z) = 2;//current_pose_.pose.position.z;
+            x_(STATE::X) = current_pose_.pose.position.x;
+            x_(STATE::Y) = current_pose_.pose.position.y;
+            x_(STATE::Z) = current_pose_.pose.position.z;
 
         };
 
@@ -155,7 +155,7 @@ namespace kalman_filter_localization
         timer_ = create_wall_timer(0.01s, std::bind(&EkfLocalizationComponent::broadcastPose, this));
     }   
 
-    /* states
+    /* state
      * x  = [p v q] = [x y z vx vy vz qx qy qz qw]
      * dx = [dp dv dth] = [dx dy dz dvx dvy dvz dthx dthy dthz]
      * 
@@ -241,7 +241,7 @@ namespace kalman_filter_localization
      */
     void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg)
     {
-        std::cout << "measurementUpdate" << std::endl;
+        //std::cout << "measurementUpdate" << std::endl;
         // error state
         current_stamp_ = input_pose_msg.header.stamp;
         Eigen::MatrixXd R = var_gnss_ * Eigen::MatrixXd::Identity(3,3);
@@ -259,7 +259,9 @@ namespace kalman_filter_localization
         else x_.segment(STATE::QX, 4) = Eigen::Vector4d(cos(norm_quat/2), sin(norm_quat/2) * dx(STATE::QX)/norm_quat,
                                                  sin(norm_quat/2) * dx(STATE::QY)/norm_quat, sin(norm_quat/2) * dx(STATE::QZ)/norm_quat);
         P_ = (Eigen::MatrixXd::Identity(9,9) - K*H) * P_;
-
+        
+        std::cout << "measurementUpdate" << std::endl;
+        std::cout << x_ << std::endl;
         return;
     }
 
