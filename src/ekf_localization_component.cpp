@@ -261,8 +261,8 @@ namespace kalman_filter_localization
         x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dx.segment(STATE::VX, 3);
         double norm_quat = sqrt(dx(ERROR_STATE::DTHX)*dx(ERROR_STATE::DTHX) + dx(ERROR_STATE::DTHY)*dx(ERROR_STATE::DTHY) + dx(ERROR_STATE::DTHZ)*dx(ERROR_STATE::DTHZ));
         if (norm_quat < 1e-10) x_.segment(STATE::QX, 4) = Eigen::Vector4d(0, 0, 0, cos(norm_quat/2));
-        else x_.segment(STATE::QX, 4) = Eigen::Vector4d(sin(norm_quat/2) * dx(STATE::QX)/norm_quat, sin(norm_quat/2) * dx(STATE::QY)/norm_quat,
-                                                 sin(norm_quat/2) * dx(STATE::QZ)/norm_quat, cos(norm_quat/2));
+        else x_.segment(STATE::QX, 4) = Eigen::Vector4d(sin(norm_quat/2) * dx(ERROR_STATE::DTHX)/norm_quat, sin(norm_quat/2) * dx(ERROR_STATE::DTHY)/norm_quat,
+                                                 sin(norm_quat/2) * dx(ERROR_STATE::DTHZ)/norm_quat, cos(norm_quat/2));
                                                  
         P_ = (Eigen::MatrixXd::Identity(num_error_state_, num_error_state_) - K*H) * P_;
         
