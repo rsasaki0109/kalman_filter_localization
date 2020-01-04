@@ -45,6 +45,7 @@ extern "C" {
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <sensor_msgs/msg/imu.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <tf2/transform_datatypes.h>
 #include <tf2/convert.h>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -94,7 +95,7 @@ namespace kalman_filter_localization
         Eigen::Vector3d gravity_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
-        rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_odom_;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
