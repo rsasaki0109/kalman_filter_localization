@@ -6,3 +6,6 @@ ekf_localization:
       var_imu_w_: 0.01
       var_imu_acc_: 0.01
       var_gnss_: 0.1
+      var_odom_: 0.1
+      use_gnss_: true
+      use_odom_: false
