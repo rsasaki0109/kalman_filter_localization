@@ -6,7 +6,7 @@ kalman_filter_localization
 - input  
 /gnss_pose  (geometry_msgs/PoseStamed)   
 /imu  (sensor_msgs/Imu)  
-/odom (geometry_msgs/PoseStamped)  
+/odom (nav_msgs/Odometry)  
 - output  
 /curent_pose (geometry_msgs/PoseStamped)
 
