@@ -14,6 +14,7 @@ kalman_filter_localization
 
 |Name|Type|Default value|Description|
 |---|---|---|---|
+|pub_period|int|10|publish period[ms]|
 |var_gnss|double|0.1|variance of a gnss receiver[m]|
 |var_odom|double|0.1|variance of an odometry[m]|
 |var_imu_w|double|0.01|variance of an angular velocity sensor[deg/sec]|

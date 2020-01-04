@@ -1,12 +1,13 @@
 ekf_localization:
     ros__parameters:
-      reference_frame_id_ : "map"
-      robot_frame_id_ : "base_link"
-      gnss_pose_topic_: "gnss_pose"
-      imu_topic_: "imu"
-      var_imu_w_: 0.01
-      var_imu_acc_: 0.01
-      var_gnss_: 0.1
-      var_odom_: 0.1
-      use_gnss_: true
-      use_odom_: false
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "gnss_pose"
+      imu_topic: "imu"
+      pub_period: 10
+      var_imu_w: 0.01
+      var_imu_acc: 0.01
+      var_gnss: 0.1
+      var_odom: 0.1
+      use_gnss: true
+      use_odom: false
