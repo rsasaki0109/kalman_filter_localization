@@ -93,6 +93,11 @@ namespace kalman_filter_localization
           VX = 3, VY = 4, VZ = 5,
           QX = 6, QY = 7, QZ = 8, QW = 9,
         };
+        enum ERROR_STATE{
+          DX   = 0,   DY = 1,   DZ = 2,
+          DVX  = 3,  DVY = 4,  DVZ = 5,
+          DTHX = 6, DTHY = 7, DTHZ = 8,
+        };
     };
 }
 

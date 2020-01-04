@@ -94,8 +94,9 @@ namespace kalman_filter_localization
         /* Init */
         previous_time_imu_ = -1;
         x_ = Eigen::VectorXd::Zero(num_state_);
+        x_(STATE::QW) = 1;
         P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_) * 100;//todo:cross var
-        gravity_ << 0,0,-9.81;
+        gravity_ << 0,0,-9.80665;
 
         /* Setup Publisher */
         std::string output_pose_name = get_name() + std::string("/current_pose");
@@ -114,6 +115,13 @@ namespace kalman_filter_localization
             x_(STATE::X) = current_pose_.pose.position.x;
             x_(STATE::Y) = current_pose_.pose.position.y;
             x_(STATE::Z) = current_pose_.pose.position.z;
+            x_(STATE::QX) = current_pose_.pose.orientation.x;
+            x_(STATE::QY) = current_pose_.pose.orientation.y;
+            x_(STATE::QZ) = current_pose_.pose.orientation.z;
+            x_(STATE::QW) = current_pose_.pose.orientation.w;
+            std::cout << "initial_x" << std::endl;
+            std::cout << x_ << std::endl;
+            std::cout << "----------------------" << std::endl;
 
         };
 
@@ -135,8 +143,7 @@ namespace kalman_filter_localization
         [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
         {
             if(initial_pose_recieved_){
-                measurementUpdate(*msg);
-                //current_pose_pub_->publish(current_pose_);   
+                measurementUpdate(*msg); 
             }    
         };
 
@@ -168,7 +175,6 @@ namespace kalman_filter_localization
      */
     void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu input_imu_msg)
     {
-        std::cout << "predictUpdate" << std::endl;
         current_stamp_ = input_imu_msg.header.stamp;
 
         // dt_imu
@@ -199,7 +205,7 @@ namespace kalman_filter_localization
         if (norm < 1e-5) quat_wdt = Eigen::Quaterniond(1, 0, 0, 0);
         else quat_wdt = Eigen::Quaterniond(cos(norm/2), sin(norm/2)*thx/norm, sin(norm/2)*thy/norm, sin(norm/2)*thz/norm);
         Eigen::Quaterniond predicted_quat = quat_wdt * previous_quat;
-        x_.segment(STATE::QX, 4) = Eigen::Vector4d(predicted_quat.w(), predicted_quat.x(), predicted_quat.y(), predicted_quat.z());//!!!
+        x_.segment(STATE::QX, 4) = Eigen::Vector4d(predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
 
         // F
         Eigen::MatrixXd F = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_);
@@ -241,11 +247,10 @@ namespace kalman_filter_localization
      */
     void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg)
     {
-        //std::cout << "measurementUpdate" << std::endl;
         // error state
         current_stamp_ = input_pose_msg.header.stamp;
         Eigen::MatrixXd R = var_gnss_ * Eigen::MatrixXd::Identity(3,3);
-        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3,9);
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3, num_error_state_);
         H.block<3,3>(0, 0) =  Eigen::MatrixXd::Identity(3,3);
         Eigen::MatrixXd K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse(); 
         Eigen::Vector3d y = Eigen::Vector3d(input_pose_msg.pose.position.x, input_pose_msg.pose.position.y, input_pose_msg.pose.position.z);
@@ -254,14 +259,13 @@ namespace kalman_filter_localization
         // state
         x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dx.segment(STATE::X, 3);
         x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dx.segment(STATE::VX, 3);
-        double norm_quat = sqrt(dx(6)*dx(6) + dx(7)*dx(7) + dx(8)*dx(8));
-        if (norm_quat < 1e-10) x_.segment(STATE::QX, 4) = Eigen::Vector4d(cos(norm_quat/2), 0, 0, 0);
-        else x_.segment(STATE::QX, 4) = Eigen::Vector4d(cos(norm_quat/2), sin(norm_quat/2) * dx(STATE::QX)/norm_quat,
-                                                 sin(norm_quat/2) * dx(STATE::QY)/norm_quat, sin(norm_quat/2) * dx(STATE::QZ)/norm_quat);
-        P_ = (Eigen::MatrixXd::Identity(9,9) - K*H) * P_;
+        double norm_quat = sqrt(dx(ERROR_STATE::DTHX)*dx(ERROR_STATE::DTHX) + dx(ERROR_STATE::DTHY)*dx(ERROR_STATE::DTHY) + dx(ERROR_STATE::DTHZ)*dx(ERROR_STATE::DTHZ));
+        if (norm_quat < 1e-10) x_.segment(STATE::QX, 4) = Eigen::Vector4d(0, 0, 0, cos(norm_quat/2));
+        else x_.segment(STATE::QX, 4) = Eigen::Vector4d(sin(norm_quat/2) * dx(STATE::QX)/norm_quat, sin(norm_quat/2) * dx(STATE::QY)/norm_quat,
+                                                 sin(norm_quat/2) * dx(STATE::QZ)/norm_quat, cos(norm_quat/2));
+                                                 
+        P_ = (Eigen::MatrixXd::Identity(num_error_state_, num_error_state_) - K*H) * P_;
         
-        std::cout << "measurementUpdate" << std::endl;
-        std::cout << x_ << std::endl;
         return;
     }
 

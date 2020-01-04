@@ -1,5 +1,6 @@
 ekf_localization:
     ros__parameters:
+      reference_frame_id_ : "map"
       gnss_pose_topic_: "gnss_pose"
       imu_topic_: "imu"
       var_imu_w_: 0.01
