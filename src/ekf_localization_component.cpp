@@ -7,7 +7,6 @@ namespace kalman_filter_localization
     EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & options)
     : Node("ekf_localization", options)
     {
-        /* Static Parameters */
         declare_parameter("reference_frame_id","map");
         get_parameter("reference_frame_id",reference_frame_id_);
         declare_parameter("robot_frame_id","base_link");
@@ -20,10 +19,9 @@ namespace kalman_filter_localization
         get_parameter("odom_topic",odom_topic_);
         declare_parameter("gnss_pose_topic",get_name() + std::string("/gnss_pose"));
         get_parameter("gnss_pose_topic",gnss_pose_topic_);
-
-        /* Dynamic Parameters */
-        declare_parameter("frequency_pub",0.01);
-        get_parameter("frequency_pub",frequency_pub_);
+        
+        declare_parameter("pub_period",10);
+        get_parameter("pub_period",pub_period_);
         declare_parameter("num_state",10);
         get_parameter("num_state",num_state_);
         declare_parameter("num_error_state",9);
@@ -204,7 +202,8 @@ namespace kalman_filter_localization
         sub_gnss_pose_ = 
             create_subscription<geometry_msgs::msg::PoseStamped>(gnss_pose_topic_, 1,
                 gnss_pose_callback);
-        timer_ = create_wall_timer(0.01s, std::bind(&EkfLocalizationComponent::broadcastPose, this));
+        std::chrono::milliseconds period(pub_period_);
+        timer_ = create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period), std::bind(&EkfLocalizationComponent::broadcastPose, this));
     }   
 
     /* state
