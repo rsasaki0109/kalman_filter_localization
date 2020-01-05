@@ -30,6 +30,7 @@ find_package(tf2_sensor_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(Eigen3 REQUIRED)
@@ -54,7 +55,7 @@ src/ekf_localization_component.cpp
 
 target_compile_definitions(ekf_localization_component PRIVATE "KFL_EKFL_BUILDING_DLL")
 ament_target_dependencies(ekf_localization_component
-  rclcpp rclcpp_components sensor_msgs tf2 tf2_eigen tf2_geometry_msgs)
+  rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs)
 
 add_executable(ekf_localization_node
 src/ekf_localization_node.cpp
@@ -64,7 +65,7 @@ target_link_libraries(ekf_localization_node
 ekf_localization_component)
 
 ament_target_dependencies(ekf_localization_node
-  rclcpp rclcpp_components sensor_msgs tf2 tf2_eigen tf2_geometry_msgs)
+  rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs)
 
 include_directories(
     include
@@ -102,7 +103,7 @@ ament_export_dependencies(ament_cmake)
 ament_export_dependencies(rclcpp)
 ament_export_dependencies(rclcpp_components)
 ament_export_dependencies(tf2_ros)
-#ament_export_dependencies(class_loader)
+ament_export_dependencies(nav_msgs)
 ament_export_dependencies(sensor_msgs)
 ament_export_dependencies(geometry_msgs)
 ament_export_dependencies(rosidl_default_runtime)

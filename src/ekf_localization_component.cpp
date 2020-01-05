@@ -19,7 +19,7 @@ namespace kalman_filter_localization
         get_parameter("odom_topic",odom_topic_);
         declare_parameter("gnss_pose_topic",get_name() + std::string("/gnss_pose"));
         get_parameter("gnss_pose_topic",gnss_pose_topic_);
-        
+
         declare_parameter("pub_period",10);
         get_parameter("pub_period",pub_period_);
         declare_parameter("num_state",10);
@@ -175,10 +175,15 @@ namespace kalman_filter_localization
         };
 
         auto odom_callback =
-        [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+        [this](const typename nav_msgs::msg::Odometry::SharedPtr msg) -> void
         {
             if(initial_pose_recieved_ && use_odom_){
-                measurementUpdate(*msg, var_odom_); 
+                geometry_msgs::msg::PoseStamped pose;
+                pose.header = msg->header;
+                pose.pose.position.x = msg->pose.pose.position.x;
+                pose.pose.position.y = msg->pose.pose.position.y;
+                pose.pose.position.z = msg->pose.pose.position.z;
+                measurementUpdate(pose, var_odom_); 
             }    
         };
 
@@ -197,7 +202,7 @@ namespace kalman_filter_localization
             create_subscription<sensor_msgs::msg::Imu>(imu_topic_, 1,
                 imu_callback);
         sub_odom_ = 
-            create_subscription<geometry_msgs::msg::PoseStamped>(odom_topic_, 1,
+            create_subscription<nav_msgs::msg::Odometry>(odom_topic_, 1,
                 odom_callback);
         sub_gnss_pose_ = 
             create_subscription<geometry_msgs::msg::PoseStamped>(gnss_pose_topic_, 1,
