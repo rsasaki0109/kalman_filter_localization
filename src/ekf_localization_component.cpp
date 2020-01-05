@@ -30,10 +30,16 @@ namespace kalman_filter_localization
         get_parameter("var_imu_w",var_imu_w_);
         declare_parameter("var_imu_acc",0.01);
         get_parameter("var_imu_acc",var_imu_acc_);
-        declare_parameter("var_gnss",0.1);
-        get_parameter("var_gnss",var_gnss_);
-        declare_parameter("var_odom",0.1);
-        get_parameter("var_odom",var_odom_);
+
+        declare_parameter("var_gnss_xy",0.1);
+        get_parameter("var_gnss_xy",var_gnss_xy_);
+
+        declare_parameter("var_gnss_z",0.15);
+        get_parameter("var_gnss_z",var_gnss_z_);
+
+        declare_parameter("var_odom_xyz",0.2);
+        get_parameter("var_odom_xyz",var_odom_xyz_);
+
         declare_parameter("use_gnss",true);
         get_parameter("use_gnss",use_gnss_);
         declare_parameter("use_odom",false);
@@ -104,6 +110,13 @@ namespace kalman_filter_localization
         P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_) * 100;//todo:cross var
         gravity_ << 0,0,-9.80665;
 
+        var_gnss_[0] = var_gnss_xy_;
+        var_gnss_[1] = var_gnss_xy_;
+        var_gnss_[2] = var_gnss_z_;
+        var_odom_[0] = var_odom_xyz_;
+        var_odom_[1] = var_odom_xyz_;
+        var_odom_[2] = var_odom_xyz_;
+        
         /* Setup Publisher */
         std::string output_pose_name = get_name() + std::string("/current_pose");
         current_pose_pub_ = 
@@ -164,10 +177,7 @@ namespace kalman_filter_localization
                 msg->linear_acceleration.x = acc_out.vector.y;
                 msg->linear_acceleration.x = acc_out.vector.z;
             }
-            catch (tf2::TransformException& e)
-            {
-                return;
-            }
+            catch (tf2::TransformException& e){}
 
             if(initial_pose_recieved_){
                 predictUpdate(*msg);
@@ -294,11 +304,14 @@ namespace kalman_filter_localization
      * 
      * P_k = (I - KH)*P_{k-1} 
      */
-    void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg, const double variance)
+    void EkfLocalizationComponent::measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg, const double variance[])
     {
         // error state
         current_stamp_ = input_pose_msg.header.stamp;
-        Eigen::MatrixXd R = variance * Eigen::MatrixXd::Identity(3,3);
+        Eigen::Matrix3d R;
+        R << variance[0], 0, 0,
+             0, variance[1], 0 ,
+             0, 0, variance[2];
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3, num_error_state_);
         H.block<3,3>(0, 0) =  Eigen::MatrixXd::Identity(3,3);
         Eigen::MatrixXd K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse(); 
@@ -306,15 +319,15 @@ namespace kalman_filter_localization
         Eigen::VectorXd dx = K *(y - x_.segment(STATE::X, 3));
 
         // state
-        x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dx.segment(STATE::X, 3);
-        x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dx.segment(STATE::VX, 3);
+        x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dx.segment(ERROR_STATE::DX, 3);
+        x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dx.segment(ERROR_STATE::DVX, 3);
         double norm_quat = sqrt(dx(ERROR_STATE::DTHX)*dx(ERROR_STATE::DTHX) + dx(ERROR_STATE::DTHY)*dx(ERROR_STATE::DTHY) + dx(ERROR_STATE::DTHZ)*dx(ERROR_STATE::DTHZ));
         if (norm_quat < 1e-10) x_.segment(STATE::QX, 4) = Eigen::Vector4d(0, 0, 0, cos(norm_quat/2));
         else x_.segment(STATE::QX, 4) = Eigen::Vector4d(sin(norm_quat/2) * dx(ERROR_STATE::DTHX)/norm_quat, sin(norm_quat/2) * dx(ERROR_STATE::DTHY)/norm_quat,
                                                  sin(norm_quat/2) * dx(ERROR_STATE::DTHZ)/norm_quat, cos(norm_quat/2));
                                                  
         P_ = (Eigen::MatrixXd::Identity(num_error_state_, num_error_state_) - K*H) * P_;
-        
+
         return;
     }
 
