@@ -42,10 +42,20 @@ extern "C" {
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <tf2/transform_datatypes.h>
+#include <tf2/convert.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2_eigen/tf2_eigen.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_sensor_msgs/tf2_sensor_msgs.h>
+#include <tf2/transform_datatypes.h>
+#include <tf2_eigen/tf2_eigen.h>
+
 #include <rclcpp_components/register_node_macro.hpp>
 
 #include <Eigen/Core>
@@ -61,6 +71,7 @@ namespace kalman_filter_localization
         explicit EkfLocalizationComponent(const rclcpp::NodeOptions & options);
     private:
         std::string reference_frame_id_;
+        std::string robot_frame_id_;
         std::string initial_pose_topic_;
         std::string imu_topic_;
         std::string odom_topic_;

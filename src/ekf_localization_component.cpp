@@ -10,6 +10,8 @@ namespace kalman_filter_localization
         /* Static Parameters */
         declare_parameter("reference_frame_id","map");
         get_parameter("reference_frame_id",reference_frame_id_);
+        declare_parameter("robot_frame_id","base_link");
+        get_parameter("robot_frame_id",robot_frame_id_);
         declare_parameter("initial_pose_topic",get_name() + std::string("/initial_pose"));
         get_parameter("initial_pose_topic",initial_pose_topic_);
         declare_parameter("imu_topic",get_name() + std::string("/imu"));
@@ -134,6 +136,41 @@ namespace kalman_filter_localization
         auto imu_callback =
         [this](const typename sensor_msgs::msg::Imu::SharedPtr msg) -> void
         {
+            tf2_ros::Buffer tfbuffer(this->get_clock());
+            Eigen::Vector3d acc = Eigen::Vector3d(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
+            double norm_acc = sqrt(acc(0)*acc(0) + acc(1)*acc(1) + acc(2)*acc(2));
+            Eigen::Vector3d measured_acc = Eigen::Vector3d(acc(0)/norm_acc, acc(1)/norm_acc, acc(2)/norm_acc);
+            try
+            {
+                geometry_msgs::msg::Vector3Stamped acc_in, acc_out, w_in, w_out;
+                acc_in.vector.x = measured_acc(0);
+                acc_in.vector.y = measured_acc(1);
+                acc_in.vector.z = measured_acc(2);
+                w_in.vector.x = msg->angular_velocity.x;
+                w_in.vector.y = msg->angular_velocity.y;
+                w_in.vector.z = msg->angular_velocity.z;
+
+                tf2::TimePoint time_point = tf2::TimePoint(
+                std::chrono::seconds(msg->header.stamp.sec) +
+                std::chrono::nanoseconds(msg->header.stamp.nanosec));
+
+                const geometry_msgs::msg::TransformStamped transform = tfbuffer.lookupTransform(
+                    robot_frame_id_, msg->header.frame_id, time_point);
+                tf2::doTransform(acc_in, acc_out, transform);
+                tf2::doTransform(w_in, w_out, transform);
+                measured_acc = Eigen::Vector3d(acc_out.vector.x, acc_out.vector.y, acc_out.vector.z);
+                msg->angular_velocity.x = w_out.vector.x;
+                msg->angular_velocity.x = w_out.vector.y;
+                msg->angular_velocity.x = w_out.vector.z;
+                msg->linear_acceleration.x = acc_out.vector.x;
+                msg->linear_acceleration.x = acc_out.vector.y;
+                msg->linear_acceleration.x = acc_out.vector.z;
+            }
+            catch (tf2::TransformException& e)
+            {
+                return;
+            }
+
             if(initial_pose_recieved_){
                 predictUpdate(*msg);
             }    
