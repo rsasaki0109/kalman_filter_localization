@@ -76,7 +76,7 @@ namespace kalman_filter_localization
         std::string imu_topic_;
         std::string odom_topic_;
         std::string gnss_pose_topic_;
-        double frequency_pub_;
+        int pub_period_;
         int num_state_;
         int num_error_state_;
         int num_obs_;
