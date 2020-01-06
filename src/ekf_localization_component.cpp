@@ -33,16 +33,12 @@ namespace kalman_filter_localization
         get_parameter("var_imu_w",var_imu_w_);
         declare_parameter("var_imu_acc",0.01);
         get_parameter("var_imu_acc",var_imu_acc_);
-
         declare_parameter("var_gnss_xy",0.1);
         get_parameter("var_gnss_xy",var_gnss_xy_);
-
         declare_parameter("var_gnss_z",0.15);
         get_parameter("var_gnss_z",var_gnss_z_);
-
         declare_parameter("var_odom_xyz",0.2);
         get_parameter("var_odom_xyz",var_odom_xyz_);
-
         declare_parameter("use_gnss",true);
         get_parameter("use_gnss",use_gnss_);
         declare_parameter("use_odom",false);
@@ -144,7 +140,6 @@ namespace kalman_filter_localization
             std::cout << "initial_x" << std::endl;
             std::cout << x_ << std::endl;
             std::cout << "----------------------" << std::endl;
-
         };
 
         auto imu_callback =
@@ -161,7 +156,6 @@ namespace kalman_filter_localization
                     w_in.vector.x = msg->angular_velocity.x;
                     w_in.vector.y = msg->angular_velocity.y;
                     w_in.vector.z = msg->angular_velocity.z;
-
                     tf2::TimePoint time_point = tf2::TimePoint(
                         std::chrono::seconds(msg->header.stamp.sec) +
                         std::chrono::nanoseconds(msg->header.stamp.nanosec));
@@ -252,17 +246,13 @@ namespace kalman_filter_localization
         Eigen::Vector3d acc = Eigen::Vector3d(input_imu_msg.linear_acceleration.x, input_imu_msg.linear_acceleration.y, input_imu_msg.linear_acceleration.z);
         // pos
         x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dt_imu * x_.segment(STATE::VX, 3) 
-                                            + 1/2 * dt_imu * dt_imu * (rot_mat * acc - gravity_); 
+                                            + 0.5 * dt_imu * dt_imu * (rot_mat * acc - gravity_); 
         // vel
         x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * acc - gravity_);
-        // quat (TODO:FIX)
-        double thx = input_imu_msg.angular_velocity.x * dt_imu;
-        double thy = input_imu_msg.angular_velocity.y * dt_imu;
-        double thz = input_imu_msg.angular_velocity.z * dt_imu;
-        double norm = sqrt(thx*thx + thy*thy + thz*thz);
-        Eigen::Quaterniond quat_wdt;
-        if (norm < 1e-5) quat_wdt = Eigen::Quaterniond(1, 0, 0, 0);
-        else quat_wdt = Eigen::Quaterniond(cos(norm/2), sin(norm/2)*thx/norm, sin(norm/2)*thy/norm, sin(norm/2)*thz/norm);
+        // quat 
+        Eigen::Quaterniond quat_wdt =  Eigen::Quaterniond(Eigen::AngleAxisd(input_imu_msg.angular_velocity.x * dt_imu, Eigen::Vector3d::UnitX()) 
+                                        * Eigen::AngleAxisd(input_imu_msg.angular_velocity.y * dt_imu, Eigen::Vector3d::UnitY())    
+                                        * Eigen::AngleAxisd(input_imu_msg.angular_velocity.z * dt_imu, Eigen::Vector3d::UnitZ()));  
         Eigen::Quaterniond predicted_quat = quat_wdt * previous_quat;
         x_.segment(STATE::QX, 4) = Eigen::Vector4d(predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
 
