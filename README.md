@@ -4,9 +4,11 @@ Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localizatio
 ## node
 ekf_localization_node
 - input  
+/initial_pose (geometry_msgs/PoseStamed)   
 /gnss_pose  (geometry_msgs/PoseStamed)   
 /imu  (sensor_msgs/Imu)  
 /odom (nav_msgs/Odometry)  
+/tf(/base_link(robot frame) → /imu_link(imu frame))  
 - output  
 /curent_pose (geometry_msgs/PoseStamped)
 
@@ -25,7 +27,7 @@ ekf_localization_node
 
 ## demo
 
-[rosbag demo data](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
+[rosbag demo data(ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
 
 
 ```
