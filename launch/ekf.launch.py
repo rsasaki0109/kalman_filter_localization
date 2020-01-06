@@ -18,13 +18,13 @@ def generate_launch_description():
         package='kalman_filter_localization',
         node_executable='ekf_localization_node',
         parameters=[ekf_param_dir],
+        remappings=[('/ekf_localization/gnss_pose','/gnss_pose'),('/ekf_localization/imu','/imu')],
         output='screen'
         )
     
     tf = launch_ros.actions.Node(
         package='tf2_ros',
         node_executable='static_transform_publisher',
-        remappings=[('/ekf_localization/gnss_pose','/gnss_pose'),('/ekf_localization/imu','/imu')],
         arguments=['0','0','0','0','0','0','1','base_link','imu_link']
         )
 
