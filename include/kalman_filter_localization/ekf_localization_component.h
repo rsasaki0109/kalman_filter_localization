@@ -92,9 +92,11 @@ namespace kalman_filter_localization
         bool use_odom_;
         bool initial_pose_recieved_;
         double previous_time_imu_;
+
         rclcpp::Time current_stamp_;
         Eigen::VectorXd x_;
         Eigen::MatrixXd P_;
+        
         Eigen::Vector3d gravity_;
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
