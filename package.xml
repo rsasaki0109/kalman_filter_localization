@@ -3,12 +3,11 @@
 <package format="3">
   <name>kalman_filter_localization</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="ryo@todo.todo">ryo</maintainer>
+  <description>ros2  package of Kalman Filter Based Localization</description>
+  <maintainer email="rsasaki0109@gmail.com">sasaki</maintainer>
   <license>TODO: License declaration</license>
 
   <exec_depend>launch_ros</exec_depend>
-  <!--<exec_depend>class_loader</exec_depend>-->
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

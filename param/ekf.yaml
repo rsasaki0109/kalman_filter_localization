@@ -4,6 +4,7 @@ ekf_localization:
       robot_frame_id: "base_link"
       gnss_pose_topic: "gnss_pose"
       imu_topic: "imu"
+      odom_topic: "odom"
       pub_period: 10
       var_imu_w: 0.01
       var_imu_acc: 0.01

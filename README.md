@@ -2,7 +2,7 @@
 Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odometry(Visual Odometry/Lidar Odometry).
 
 ## node
-kalman_filter_localization
+ekf_localization_node
 - input  
 /gnss_pose  (geometry_msgs/PoseStamed)   
 /imu  (sensor_msgs/Imu)  
@@ -19,7 +19,7 @@ kalman_filter_localization
 |var_gnss_z|double|0.15|variance of a gnss receiver about position z[m]|
 |var_odom_xyz|double|0.1|variance of an odometry[m]|
 |var_imu_w|double|0.01|variance of an angular velocity sensor[deg/sec]|
-|var_imu_acc|double|0.01|variance of an accelerometer[m^2/sec]|
+|var_imu_acc|double|0.01|variance of an accelerometer[m/sec^2]|
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
 
@@ -29,11 +29,7 @@ kalman_filter_localization
 
 
 ```
-ros2 run kalman_filter_localization ekf_localization_node /ekf_localization/gnss_pose:=/gnss_pose /ekf_localization/imu:=/imu
-```
-
-```
-ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 1 "base_link" "imu_link"
+ros2 launch kalman_filter_localization ekf.launch.py
 ```
 
 ```
