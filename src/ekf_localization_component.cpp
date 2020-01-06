@@ -5,7 +5,10 @@ using namespace std::chrono_literals;
 namespace kalman_filter_localization
 {
     EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & options)
-    : Node("ekf_localization", options)
+    : Node("ekf_localization", options),
+        clock_(RCL_ROS_TIME), 
+        tfbuffer_(std::make_shared<rclcpp::Clock>(clock_)),
+        listener_(tfbuffer_)
     {
         declare_parameter("reference_frame_id","map");
         get_parameter("reference_frame_id",reference_frame_id_);
@@ -107,7 +110,7 @@ namespace kalman_filter_localization
         previous_time_imu_ = -1;
         x_ = Eigen::VectorXd::Zero(num_state_);
         x_(STATE::QW) = 1;
-        P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_) * 100;//todo:cross var
+        P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_) * 100;//todo:set initial value properly
         gravity_ << 0,0,-9.80665;
 
         var_gnss_[0] = var_gnss_xy_;
@@ -147,41 +150,38 @@ namespace kalman_filter_localization
         auto imu_callback =
         [this](const typename sensor_msgs::msg::Imu::SharedPtr msg) -> void
         {
-            tf2_ros::Buffer tfbuffer(this->get_clock());
-            Eigen::Vector3d acc = Eigen::Vector3d(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
-            double norm_acc = sqrt(acc(0)*acc(0) + acc(1)*acc(1) + acc(2)*acc(2));
-            Eigen::Vector3d measured_acc = Eigen::Vector3d(acc(0)/norm_acc, acc(1)/norm_acc, acc(2)/norm_acc);
-            try
-            {
-                geometry_msgs::msg::Vector3Stamped acc_in, acc_out, w_in, w_out;
-                acc_in.vector.x = measured_acc(0);
-                acc_in.vector.y = measured_acc(1);
-                acc_in.vector.z = measured_acc(2);
-                w_in.vector.x = msg->angular_velocity.x;
-                w_in.vector.y = msg->angular_velocity.y;
-                w_in.vector.z = msg->angular_velocity.z;
-
-                tf2::TimePoint time_point = tf2::TimePoint(
-                std::chrono::seconds(msg->header.stamp.sec) +
-                std::chrono::nanoseconds(msg->header.stamp.nanosec));
-
-                const geometry_msgs::msg::TransformStamped transform = tfbuffer.lookupTransform(
-                    robot_frame_id_, msg->header.frame_id, time_point);
-                tf2::doTransform(acc_in, acc_out, transform);
-                tf2::doTransform(w_in, w_out, transform);
-                measured_acc = Eigen::Vector3d(acc_out.vector.x, acc_out.vector.y, acc_out.vector.z);
-                msg->angular_velocity.x = w_out.vector.x;
-                msg->angular_velocity.x = w_out.vector.y;
-                msg->angular_velocity.x = w_out.vector.z;
-                msg->linear_acceleration.x = acc_out.vector.x;
-                msg->linear_acceleration.x = acc_out.vector.y;
-                msg->linear_acceleration.x = acc_out.vector.z;
-            }
-            catch (tf2::TransformException& e){}
-
             if(initial_pose_recieved_){
-                predictUpdate(*msg);
-            }    
+                sensor_msgs::msg::Imu transformed_msg;
+                try
+                {
+                    geometry_msgs::msg::Vector3Stamped acc_in, acc_out, w_in, w_out;
+                    acc_in.vector.x = msg->linear_acceleration.x;
+                    acc_in.vector.y = msg->linear_acceleration.y;
+                    acc_in.vector.z = msg->linear_acceleration.z;
+                    w_in.vector.x = msg->angular_velocity.x;
+                    w_in.vector.y = msg->angular_velocity.y;
+                    w_in.vector.z = msg->angular_velocity.z;
+
+                    tf2::TimePoint time_point = tf2::TimePoint(
+                        std::chrono::seconds(msg->header.stamp.sec) +
+                        std::chrono::nanoseconds(msg->header.stamp.nanosec));
+                    const geometry_msgs::msg::TransformStamped transform = tfbuffer_.lookupTransform(
+                        robot_frame_id_, msg->header.frame_id, time_point);
+                    tf2::doTransform(acc_in, acc_out, transform);
+                    tf2::doTransform(w_in, w_out, transform);
+                    transformed_msg.header.stamp = msg->header.stamp;
+                    transformed_msg.angular_velocity.x = w_out.vector.x;
+                    transformed_msg.angular_velocity.y = w_out.vector.y;
+                    transformed_msg.angular_velocity.z = w_out.vector.z;
+                    transformed_msg.linear_acceleration.x = acc_out.vector.x;
+                    transformed_msg.linear_acceleration.y = acc_out.vector.y;
+                    transformed_msg.linear_acceleration.z = acc_out.vector.z;       
+                }
+                catch (tf2::TransformException& e){
+                    RCLCPP_ERROR(this->get_logger(),"%s",e.what());
+                }
+                predictUpdate(transformed_msg);
+            }       
         };
 
         auto odom_callback =
@@ -255,7 +255,7 @@ namespace kalman_filter_localization
                                             + 1/2 * dt_imu * dt_imu * (rot_mat * acc - gravity_); 
         // vel
         x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * acc - gravity_);
-        // quat
+        // quat (TODO:FIX)
         double thx = input_imu_msg.angular_velocity.x * dt_imu;
         double thy = input_imu_msg.angular_velocity.y * dt_imu;
         double thz = input_imu_msg.angular_velocity.z * dt_imu;

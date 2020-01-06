@@ -102,6 +102,9 @@ namespace kalman_filter_localization
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
+        rclcpp::Clock clock_;
+        tf2_ros::Buffer tfbuffer_;
+        tf2_ros::TransformListener listener_;
         void predictUpdate(const sensor_msgs::msg::Imu input_imu_msg);
         void measurementUpdate(const geometry_msgs::msg::PoseStamped input_pose_msg, const double variance[]);
         void broadcastPose();

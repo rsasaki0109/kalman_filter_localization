@@ -33,6 +33,10 @@ ros2 run kalman_filter_localization ekf_localization_node /ekf_localization/gnss
 ```
 
 ```
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 1 "base_link" "imu_link"
+```
+
+```
 ros2 topic pub ekf_localization/initial_pose geometry_msgs/PoseStamped '{header: {stamp: {sec: 1532228824, nanosec: 55000000}, frame_id: "map"}, pose: {position: {x: 0, y: 0, z: 10}, orientation: {z: 1, w: 0}}}' --once
 ```
 
