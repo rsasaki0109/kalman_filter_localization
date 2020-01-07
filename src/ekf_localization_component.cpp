@@ -102,7 +102,7 @@ namespace kalman_filter_localization
         }
         );
         
-        /* Init */
+        // Init 
         previous_time_imu_ = -1;
         x_ = Eigen::VectorXd::Zero(num_state_);
         x_(STATE::QW) = 1;
