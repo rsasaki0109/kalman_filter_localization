@@ -6,9 +6,9 @@ ekf_localization:
       imu_topic: "imu"
       odom_topic: "odom"
       pub_period: 10
-      sigma_imu_w: 0.01
-      sigma_imu_acc: 0.01
-      sigma_gnss: 0.1
-      sigma_odom: 0.1
+      var_imu_w: 0.01
+      var_imu_acc: 0.01
+      var_gnss: 0.1
+      var_odom: 0.1
       use_gnss: true
       use_odom: false
