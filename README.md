@@ -17,11 +17,11 @@ ekf_localization_node
 |Name|Type|Default value|Description|
 |---|---|---|---|
 |pub_period|int|10|publish period[ms]|
-|sigma_gnss_xy|double|0.1|variance of a gnss receiver about position xy[m^2]|
-|sigma_gnss_z|double|0.15|variance of a gnss receiver about position z[m^2]|
-|sigma_odom_xyz|double|0.1|variance of an odometry[m^2]|
-|sigma_imu_w|double|0.01|variance of an angular velocity sensor[(deg/sec)^2]|
-|sigma_imu_acc|double|0.01|variance of an accelerometer[(m/sec^2)^2]|
+|var_gnss_xy|double|0.1|variance of a gnss receiver about position xy[m^2]|
+|var_gnss_z|double|0.15|variance of a gnss receiver about position z[m^2]|
+|var_odom_xyz|double|0.1|variance of an odometry[m^2]|
+|var_imu_w|double|0.01|variance of an angular velocity sensor[(deg/sec)^2]|
+|var_imu_acc|double|0.01|variance of an accelerometer[(m/sec^2)^2]|
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
 

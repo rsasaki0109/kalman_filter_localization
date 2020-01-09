@@ -29,16 +29,16 @@ namespace kalman_filter_localization
         get_parameter("num_state",num_state_);
         declare_parameter("num_error_state",9);
         get_parameter("num_error_state",num_error_state_);
-        declare_parameter("sigma_imu_w",0.01);
-        get_parameter("sigma_imu_w",sigma_imu_w_);
-        declare_parameter("sigma_imu_acc",0.01);
-        get_parameter("sigma_imu_acc",sigma_imu_acc_);
-        declare_parameter("sigma_gnss_xy",0.1);
-        get_parameter("sigma_gnss_xy",sigma_gnss_xy_);
-        declare_parameter("sigma_gnss_z",0.15);
-        get_parameter("sigma_gnss_z",sigma_gnss_z_);
-        declare_parameter("sigma_odom_xyz",0.2);
-        get_parameter("sigma_odom_xyz",sigma_odom_xyz_);
+        declare_parameter("var_imu_w",0.01);
+        get_parameter("var_imu_w",var_imu_w_);
+        declare_parameter("var_imu_acc",0.01);
+        get_parameter("var_imu_acc",var_imu_acc_);
+        declare_parameter("var_gnss_xy",0.1);
+        get_parameter("var_gnss_xy",var_gnss_xy_);
+        declare_parameter("var_gnss_z",0.15);
+        get_parameter("var_gnss_z",var_gnss_z_);
+        declare_parameter("var_odom_xyz",0.2);
+        get_parameter("var_odom_xyz",var_odom_xyz_);
         declare_parameter("use_gnss",true);
         get_parameter("use_gnss",use_gnss_);
         declare_parameter("use_odom",false);
@@ -109,12 +109,12 @@ namespace kalman_filter_localization
         P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_) * 100;//todo:set initial value properly
         gravity_ << 0,0,-9.80665;
 
-        sigma_gnss_[0] = sigma_gnss_xy_;
-        sigma_gnss_[1] = sigma_gnss_xy_;
-        sigma_gnss_[2] = sigma_gnss_z_;
-        sigma_odom_[0] = sigma_odom_xyz_;
-        sigma_odom_[1] = sigma_odom_xyz_;
-        sigma_odom_[2] = sigma_odom_xyz_;
+        var_gnss_[0] = var_gnss_xy_;
+        var_gnss_[1] = var_gnss_xy_;
+        var_gnss_[2] = var_gnss_z_;
+        var_odom_[0] = var_odom_xyz_;
+        var_odom_[1] = var_odom_xyz_;
+        var_odom_[2] = var_odom_xyz_;
 
         initial_pose_recieved_ = false;
         
@@ -187,7 +187,7 @@ namespace kalman_filter_localization
                 pose.pose.position.x = msg->pose.pose.position.x;
                 pose.pose.position.y = msg->pose.pose.position.y;
                 pose.pose.position.z = msg->pose.pose.position.z;
-                measurementUpdate(pose, sigma_odom_); 
+                measurementUpdate(pose, var_odom_); 
             }    
         };
 
@@ -195,7 +195,7 @@ namespace kalman_filter_localization
         [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
         {
             if(initial_pose_recieved_ && use_gnss_){
-                measurementUpdate(*msg, sigma_gnss_); 
+                measurementUpdate(*msg, var_gnss_); 
             }    
         };
 
@@ -267,8 +267,8 @@ namespace kalman_filter_localization
         
         // Q
         Eigen::MatrixXd Q = Eigen::MatrixXd::Identity(6,6);
-        Q.block<3,3>(0, 0) = sigma_imu_acc_ * Q.block<3,3>(0, 0);
-        Q.block<3,3>(3, 3) = sigma_imu_w_ * Q.block<3,3>(3, 3);
+        Q.block<3,3>(0, 0) = var_imu_acc_ * Q.block<3,3>(0, 0);
+        Q.block<3,3>(3, 3) = var_imu_w_ * Q.block<3,3>(3, 3);
         Q = Q * (dt_imu * dt_imu);
 
         // L
