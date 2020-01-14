@@ -60,8 +60,6 @@ extern "C" {
 #include <rclcpp_components/register_node_macro.hpp>
 
 #include <Eigen/Core>
-//#include <Eigen/Dense>
-
 
 namespace kalman_filter_localization
 {
@@ -92,7 +90,7 @@ namespace kalman_filter_localization
         bool use_odom_;
         
         bool initial_pose_recieved_;
-        
+
         double previous_time_imu_;
         geometry_msgs::msg::PoseStamped current_pose_;
         rclcpp::Time current_stamp_;

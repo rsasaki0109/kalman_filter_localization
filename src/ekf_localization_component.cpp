@@ -107,7 +107,7 @@ namespace kalman_filter_localization
         x_ = Eigen::VectorXd::Zero(num_state_);
         x_(STATE::QW) = 1;
         P_ = Eigen::MatrixXd::Identity(num_error_state_,num_error_state_) * 100;//todo:set initial value properly
-        gravity_ << 0,0,-9.80665;
+        gravity_ << 0,0,9.80665;
 
         var_gnss_[0] = var_gnss_xy_;
         var_gnss_[1] = var_gnss_xy_;
@@ -169,12 +169,13 @@ namespace kalman_filter_localization
                     transformed_msg.angular_velocity.z = w_out.vector.z;
                     transformed_msg.linear_acceleration.x = acc_out.vector.x;
                     transformed_msg.linear_acceleration.y = acc_out.vector.y;
-                    transformed_msg.linear_acceleration.z = acc_out.vector.z;       
+                    transformed_msg.linear_acceleration.z = acc_out.vector.z;  
+                    predictUpdate(transformed_msg);     
                 }
                 catch (tf2::TransformException& e){
                     RCLCPP_ERROR(this->get_logger(),"%s",e.what());
+                    return;
                 }
-                predictUpdate(transformed_msg);
             }       
         };
 
