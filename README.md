@@ -29,6 +29,9 @@ ekf_localization_node
 
 [rosbag demo data(ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
 
+```
+rviz2 -d src/kalman_filter_localization/config/ekfl_demo.rviz
+```
 
 ```
 ros2 launch kalman_filter_localization ekf.launch.py
