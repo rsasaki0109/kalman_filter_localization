@@ -47,3 +47,5 @@ ros2 bag play -s rosbag_v2 test.bag
 
 
 ![demo](./images/demo_ekfl.gif)    
+blue:initial pose, red:gnss pose, green: fusion pose
+
