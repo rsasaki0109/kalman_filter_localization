@@ -68,11 +68,11 @@ ament_target_dependencies(ekf_localization_node
   rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs)
 
 include_directories(
-    include
-    ${EIGEN3_INCLUDE_DIRS}
-  )
+  include
+  ${EIGEN3_INCLUDE_DIRS}
+)
 
-rclcpp_components_register_nodes(ekf_localization_component 
+rclcpp_components_register_nodes(ekf_localization_component
   "kalman_filter_localization::EkfLocalizationComponent")
 
 # install executables/libs
@@ -86,7 +86,7 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(TARGETS 
+install(TARGETS
   ekf_localization_node
   DESTINATION lib/kalman_filter_localization
 )
