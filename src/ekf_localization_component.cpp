@@ -259,12 +259,12 @@ void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu imu_msg
   // dt_imu
   double current_time_imu = imu_msg.header.stamp.sec +
     imu_msg.header.stamp.nanosec * 1e-9;
-  if (previous_time_imu_ == -1) {
-    previous_time_imu_ = current_time_imu;
-    return;
-  }
   double dt_imu = current_time_imu - previous_time_imu_;
   previous_time_imu_ = current_time_imu;
+  if (dt_imu > 0.5 /* [sec] */) {
+    RCLCPP_WARN(this->get_logger(), "imu time interval is too large");
+    return;
+  }
 
   // state
   Eigen::Quaterniond previous_quat =
