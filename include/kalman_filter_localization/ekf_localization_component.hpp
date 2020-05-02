@@ -108,8 +108,8 @@ private:
   std::string odom_topic_;
   std::string gnss_pose_topic_;
   int pub_period_;
-  int num_state_;
-  int num_error_state_;
+  int num_state_{10};
+  int num_error_state_{9};
   int num_obs_;
   double var_imu_w_;
   double var_imu_acc_;
@@ -123,13 +123,13 @@ private:
 
   bool initial_pose_recieved_;
 
-  double previous_time_imu_;
+  double previous_time_imu_{-1};
   geometry_msgs::msg::PoseStamped current_pose_;
   rclcpp::Time current_stamp_;
   Eigen::VectorXd x_;
   Eigen::MatrixXd P_;
 
-  Eigen::Vector3d gravity_;
+  Eigen::Vector3d gravity_{0, 0, 9.80665};
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
