@@ -70,6 +70,8 @@ extern "C" {
 }  // extern "C"
 #endif
 
+#include <kalman_filter_localization/ekf.hpp>
+
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform.hpp>
@@ -108,28 +110,24 @@ private:
   std::string odom_topic_;
   std::string gnss_pose_topic_;
   int pub_period_;
-  int num_state_{10};
-  int num_error_state_{9};
-  int num_obs_;
+
   double var_imu_w_;
   double var_imu_acc_;
   double var_gnss_xy_;
   double var_gnss_z_;
-  double var_gnss_[3];
+  Eigen::Vector3d var_gnss_;
   double var_odom_xyz_;
-  double var_odom_[3];
+  Eigen::Vector3d var_odom_;
   bool use_gnss_;
   bool use_odom_;
 
-  bool initial_pose_recieved_;
+  bool initial_pose_recieved_{false};
 
-  double previous_time_imu_{-1};
   geometry_msgs::msg::PoseStamped current_pose_;
   rclcpp::Time current_stamp_;
-  Eigen::VectorXd x_;
-  Eigen::MatrixXd P_;
 
-  Eigen::Vector3d gravity_{0, 0, 9.80665};
+  EKFEstimator ekf_;
+
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
@@ -139,10 +137,10 @@ private:
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;
   tf2_ros::TransformListener listener_;
-  void predictUpdate(const sensor_msgs::msg::Imu input_imu_msg);
+  void predictUpdate(const sensor_msgs::msg::Imu imu_msg);
   void measurementUpdate(
-    const geometry_msgs::msg::PoseStamped input_pose_msg,
-    const double variance[]);
+    const geometry_msgs::msg::PoseStamped pose_msg,
+    const Eigen::Vector3d variance);
   void broadcastPose();
 
   enum STATE
@@ -150,12 +148,6 @@ private:
     X  = 0, Y = 1, Z = 2,
     VX = 3, VY = 4, VZ = 5,
     QX = 6, QY = 7, QZ = 8, QW = 9,
-  };
-  enum ERROR_STATE
-  {
-    DX   = 0, DY = 1, DZ = 2,
-    DVX  = 3, DVY = 4, DVZ = 5,
-    DTHX = 6, DTHY = 7, DTHZ = 8,
   };
 };
 }  // namespace kalman_filter_localization
