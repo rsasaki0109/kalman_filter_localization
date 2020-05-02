@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /Grid1
         - /Pose1
         - /Pose2
         - /Pose3
@@ -28,7 +29,7 @@ Visualization Manager:
   Class: ""
   Displays:
     - Alpha: 0.5
-      Cell Size: 1
+      Cell Size: 10
       Class: rviz_default_plugins/Grid
       Color: 160; 160; 164
       Enabled: true
@@ -150,5 +151,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1078
-  X: 451
-  Y: 197
+  X: 646
+  Y: 67
