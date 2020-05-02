@@ -59,10 +59,6 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
 
   declare_parameter("pub_period", 10);
   get_parameter("pub_period", pub_period_);
-  declare_parameter("num_state", 10);
-  get_parameter("num_state", num_state_);
-  declare_parameter("num_error_state", 9);
-  get_parameter("num_error_state", num_error_state_);
   declare_parameter("var_imu_w", 0.01);
   get_parameter("var_imu_w", var_imu_w_);
   declare_parameter("var_imu_acc", 0.01);
@@ -84,34 +80,44 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     {
       auto results = std::make_shared<rcl_interfaces::msg::SetParametersResult>();
       for (auto param : params) {
-        if (param.get_name() == "num_state") {
-          if (num_state_ > 0) {
-            num_state_ = param.as_int();
+        if (param.get_name() == "var_imu_w") {
+          if (var_imu_w_ > 0) {
+            var_imu_w_ = param.as_double();
             results->successful = true;
             results->reason = "";
           } else {
             results->successful = false;
-            results->reason = "number of states must over 0";
+            results->reason = "var_imu_w must over 0";
           }
         }
-        if (param.get_name() == "num_error_state") {
-          if (num_error_state_ > 0) {
-            num_error_state_ = param.as_int();
+        if (param.get_name() == "var_imu_acc") {
+          if (var_imu_acc_ > 0) {
+            var_imu_acc_ = param.as_double();
             results->successful = true;
             results->reason = "";
           } else {
             results->successful = false;
-            results->reason = "number of error states must over 0";
+            results->reason = "var_imu_acc must over 0";
           }
         }
-        if (param.get_name() == "num_obs") {
-          if (num_obs_ > 0) {
-            num_obs_ = param.as_int();
+        if (param.get_name() == "var_gnss_xy") {
+          if (var_gnss_xy_ > 0) {
+            var_gnss_xy_ = param.as_double();
             results->successful = true;
             results->reason = "";
           } else {
             results->successful = false;
-            results->reason = "number of observation must over 0";
+            results->reason = "var_gnss_xy must over 0";
+          }
+        }
+        if (param.get_name() == "var_gnss_z") {
+          if (var_gnss_z_ > 0) {
+            var_gnss_z_ = param.as_double();
+            results->successful = true;
+            results->reason = "";
+          } else {
+            results->successful = false;
+            results->reason = "var_gnss_z must over 0";
           }
         }
       }
@@ -124,12 +130,10 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   );
 
   // Init
-  previous_time_imu_ = -1;
   x_ = Eigen::VectorXd::Zero(num_state_);
   x_(STATE::QW) = 1;
   // todo:set initial value properly
   P_ = Eigen::MatrixXd::Identity(num_error_state_, num_error_state_) * 100;
-  gravity_ << 0, 0, 9.80665;
 
   var_gnss_[0] = var_gnss_xy_;
   var_gnss_[1] = var_gnss_xy_;
