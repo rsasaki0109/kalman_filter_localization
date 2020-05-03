@@ -143,6 +143,10 @@ private:
     const Eigen::Vector3d variance);
   void broadcastPose();
 
+  geometry_msgs::msg::PoseStamped current_pose_odom_;
+  Eigen::Matrix4d previous_odom_mat_{Eigen::Matrix4d::Identity()};
+
+
   enum STATE
   {
     X  = 0, Y = 1, Z = 2,
