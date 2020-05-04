@@ -200,12 +200,29 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     [this](const typename nav_msgs::msg::Odometry::SharedPtr msg) -> void
     {
       if (initial_pose_recieved_ && use_odom_) {
+        Eigen::Affine3d affine;
+        tf2::fromMsg(msg->pose.pose, affine);
+        Eigen::Matrix4d odom_mat = affine.matrix();
+        if (previous_odom_mat_ == Eigen::Matrix4d::Identity()) {
+          current_pose_odom_ = current_pose_;
+          previous_odom_mat_ = odom_mat;
+          return;
+        }
+
+        Eigen::Affine3d current_affine;
+        tf2::fromMsg(current_pose_odom_.pose, current_affine);
+        Eigen::Matrix4d current_trans = current_affine.matrix();
+        current_trans = current_trans * previous_odom_mat_.inverse() * odom_mat;
+
         geometry_msgs::msg::PoseStamped pose;
         pose.header = msg->header;
-        pose.pose.position.x = msg->pose.pose.position.x;
-        pose.pose.position.y = msg->pose.pose.position.y;
-        pose.pose.position.z = msg->pose.pose.position.z;
+        pose.pose.position.x = current_trans(0, 3);
+        pose.pose.position.y = current_trans(1, 3);
+        pose.pose.position.z = current_trans(2, 3);
         measurementUpdate(pose, var_odom_);
+
+        current_pose_odom_ = current_pose_;
+        previous_odom_mat_ = odom_mat;
       }
     };
 

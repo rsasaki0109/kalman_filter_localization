@@ -40,7 +40,7 @@ class EKFEstimator
 {
 public:
   EKFEstimator()
-  : P_(Eigen::MatrixXd::Identity(num_error_state_, num_error_state_) * 100),
+  : P_(EigenMatrix9d::Identity() * 100),
     var_imu_w_{0.33},
     var_imu_acc_{0.33},
     tau_gyro_bias_{1.0}
@@ -98,8 +98,8 @@ public:
       predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
 
     // F
-    Eigen::MatrixXd F = Eigen::MatrixXd::Identity(num_error_state_, num_error_state_);
-    F.block<3, 3>(0, 3) = dt_imu * Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd F = EigenMatrix9d::Identity();
+    F.block<3, 3>(0, 3) = dt_imu * Eigen::Matrix3d::Identity();
     Eigen::Matrix3d acc_skew;
     acc_skew <<
       0, -acc(2), acc(1),
@@ -108,15 +108,15 @@ public:
     F.block<3, 3>(3, 6) = rot_mat * (-acc_skew) * dt_imu;
 
     // Q
-    Eigen::MatrixXd Q = Eigen::MatrixXd::Identity(6, 6);
+    Eigen::MatrixXd Q = Eigen::Matrix<double, 6, 6>::Identity();
     Q.block<3, 3>(0, 0) = var_imu_acc_ * Q.block<3, 3>(0, 0);
     Q.block<3, 3>(3, 3) = var_imu_w_ * Q.block<3, 3>(3, 3);
     Q = Q * (dt_imu * dt_imu);
 
     // L
-    Eigen::MatrixXd L = Eigen::MatrixXd::Zero(9, 6);
-    L.block<3, 3>(3, 0) = Eigen::MatrixXd::Identity(3, 3);
-    L.block<3, 3>(6, 3) = Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd L = Eigen::Matrix<double, num_error_state_, 6>::Zero();
+    L.block<3, 3>(3, 0) = Eigen::Matrix3d::Identity();
+    L.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
 
     P_ = F * P_ * F.transpose() + L * Q * L.transpose();
   }
@@ -145,8 +145,8 @@ public:
       variance.x(), 0, 0,
       0, variance.y(), 0,
       0, 0, variance.z();
-    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(3, num_error_state_);
-    H.block<3, 3>(0, 0) = Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd H = Eigen::Matrix<double, 3, num_error_state_>::Zero();
+    H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
     Eigen::MatrixXd K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
     Eigen::VectorXd dx = K * (y - x_.segment(STATE::X, 3));
 
@@ -167,7 +167,7 @@ public:
         cos(norm_quat / 2));
     }
 
-    P_ = (Eigen::MatrixXd::Identity(num_error_state_, num_error_state_) - K * H) * P_;
+    P_ = (EigenMatrix9d::Identity() - K * H) * P_;
   }
 
   void setTauGyroBias(const double tau_gyro_bias)
@@ -213,8 +213,10 @@ private:
   static const int num_state_{10};
   static const int num_error_state_{9};
 
+  typedef Eigen::Matrix<double, num_error_state_, num_error_state_> EigenMatrix9d;
+
   Eigen::Matrix<double, num_state_, 1> x_;
-  Eigen::Matrix<double, num_error_state_, num_error_state_> P_;
+  EigenMatrix9d P_;
 
   const Eigen::Vector3d gravity_{0, 0, 9.80665};
 
