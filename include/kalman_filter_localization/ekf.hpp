@@ -157,14 +157,21 @@ public:
       pow(dx(ERROR_STATE::DTHX), 2) +
       pow(dx(ERROR_STATE::DTHY), 2) +
       pow(dx(ERROR_STATE::DTHZ), 2));
+
     if (norm_quat < 1e-10) {
-      x_.segment(STATE::QX, 4) = Eigen::Vector4d(0, 0, 0, cos(norm_quat / 2));
+      Eigen::Quaterniond dq = Eigen::Quaterniond(0, 0, 0, cos(norm_quat / 2));
+      Eigen::Quaterniond q = Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+      Eigen::Quaterniond q_new = q * dq;
+      x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
     } else {
-      x_.segment(STATE::QX, 4) = Eigen::Vector4d(
+      Eigen::Quaterniond dq = Eigen::Quaterniond(
         sin(norm_quat / 2) * dx(ERROR_STATE::DTHX) / norm_quat,
         sin(norm_quat / 2) * dx(ERROR_STATE::DTHY) / norm_quat,
         sin(norm_quat / 2) * dx(ERROR_STATE::DTHZ) / norm_quat,
         cos(norm_quat / 2));
+      Eigen::Quaterniond q = Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+      Eigen::Quaterniond q_new = q * dq;
+      x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
     }
 
     P_ = (EigenMatrix9d::Identity() - K * H) * P_;
