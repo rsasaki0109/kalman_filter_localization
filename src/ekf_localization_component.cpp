@@ -120,6 +120,16 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
             results->reason = "var_gnss_z must over 0";
           }
         }
+        if (param.get_name() == "pub_period") {
+          if (pub_period_ > 0) {
+            pub_period_ = param.as_int();
+            results->successful = true;
+            results->reason = "";
+          } else {
+            results->successful = false;
+            results->reason = "pub_period must over 0";
+          }
+        }
       }
       if (!results->successful) {
         results->successful = false;
@@ -190,6 +200,9 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
           transformed_msg.linear_acceleration.z = acc_out.vector.z;
           predictUpdate(transformed_msg);
         } catch (tf2::TransformException & e) {
+          RCLCPP_ERROR(this->get_logger(), "%s", e.what());
+          return;
+        } catch (std::runtime_error & e) {
           RCLCPP_ERROR(this->get_logger(), "%s", e.what());
           return;
         }
