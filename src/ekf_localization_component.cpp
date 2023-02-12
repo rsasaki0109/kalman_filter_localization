@@ -122,6 +122,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
         }
         if (param.get_name() == "pub_period") {
           if (pub_period_ > 0) {
+            pub_period_ = param.as_int();
             results->successful = true;
             results->reason = "";
           } else {
