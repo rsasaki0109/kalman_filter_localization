@@ -10,7 +10,9 @@ jobs:
         runs-on: ubuntu-22.04
         container: ros:humble
         steps:
-            - uses: actions/checkout@v2-beta
+            - uses: actions/checkout@v1
+              with:
+                submodules: true
             - name: Copy repository
               run: |
                   mkdir -p ~/ros2_ws/src/kalman_filter_localization
