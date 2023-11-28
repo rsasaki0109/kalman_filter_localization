@@ -21,6 +21,7 @@ jobs:
               run: |
                   source /opt/ros/humble/setup.bash
                   cd ~/ros2_ws/src
+                  rosdep update
                   rosdep install -r -y --from-paths . --ignore-src
               shell: bash
             - name: Build packages
