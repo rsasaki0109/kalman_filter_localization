@@ -1,5 +1,4 @@
 # Kalman Filter Localization  
-![CI](https://github.com/rsasaki0109/kalman_filter_localization/workflows/CI/badge.svg)  
 Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odometry(Visual Odometry/Lidar Odometry).
 
 ## node
