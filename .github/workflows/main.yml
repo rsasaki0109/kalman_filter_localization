@@ -32,3 +32,31 @@ jobs:
                   colcon build
                   source ~/ros2_ws/install/setup.bash
               shell: bash
+
+    job2:
+        name: Build
+        runs-on: ubuntu-24.04
+        container: ros:jazzy
+        steps:
+            - uses: actions/checkout@v1
+              with:
+                submodules: true
+            - name: Copy repository
+              run: |
+                  mkdir -p ~/ros2_ws/src/kalman_filter_localization
+                  cp -rf . ~/ros2_ws/src/kalman_filter_localization
+            - name: Install dependencies
+              run: |
+                  source /opt/ros/jazzy/setup.bash
+                  cd ~/ros2_ws/src
+                  rosdep update
+                  rosdep install -r -y --from-paths . --ignore-src
+              shell: bash
+            - name: Build packages
+              run: |
+                  source /opt/ros/jazzy/setup.bash
+                  apt install python3-colcon-common-extensions
+                  cd ~/ros2_ws
+                  colcon build
+                  source ~/ros2_ws/install/setup.bash
+              shell: bash
