@@ -73,10 +73,16 @@ public:
       return;
     }
 
-    Eigen::Quaterniond quat_wdt = Eigen::Quaterniond(
-      Eigen::AngleAxisd(gyro.x() * dt_imu, Eigen::Vector3d::UnitX()) *
-      Eigen::AngleAxisd(gyro.y() * dt_imu, Eigen::Vector3d::UnitY()) *
-      Eigen::AngleAxisd(gyro.z() * dt_imu, Eigen::Vector3d::UnitZ()));
+    // Create rotation quaternion from angular velocity
+    Eigen::Vector3d w_dt = gyro * dt_imu;
+    double w_norm = w_dt.norm();
+    Eigen::Quaterniond quat_wdt;
+    if (w_norm < 1e-8) {
+      quat_wdt = Eigen::Quaterniond::Identity();
+    } else {
+      quat_wdt = Eigen::Quaterniond(
+        Eigen::AngleAxisd(w_norm, w_dt / w_norm));
+    }
     Eigen::Vector3d acc = Eigen::Vector3d(
       linear_acceleration.x(),
       linear_acceleration.y(),
@@ -92,20 +98,18 @@ public:
       0.5 * dt_imu * dt_imu * (rot_mat * acc - gravity_);
     // vel
     x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * acc - gravity_);
-    // quat
-    Eigen::Quaterniond predicted_quat = quat_wdt * previous_quat;
+    // quat - correct composition order: q_new = q_old * q_delta
+    Eigen::Quaterniond predicted_quat = previous_quat * quat_wdt;
+    predicted_quat.normalize();
     x_.segment(STATE::QX, 4) = Eigen::Vector4d(
       predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
 
-    // F
+    // F - State transition Jacobian for error state
     Eigen::MatrixXd F = EigenMatrix9d::Identity();
     F.block<3, 3>(0, 3) = dt_imu * Eigen::Matrix3d::Identity();
-    Eigen::Matrix3d acc_skew;
-    acc_skew <<
-      0, -acc(2), acc(1),
-      acc(2), 0, -acc(0),
-      -acc(1), acc(0), 0;
-    F.block<3, 3>(3, 6) = rot_mat * (-acc_skew) * dt_imu;
+    F.block<3, 3>(0, 6) = -0.5 * dt_imu * dt_imu * rot_mat * skewSymmetric(acc);
+    F.block<3, 3>(3, 6) = -dt_imu * rot_mat * skewSymmetric(acc);
+    F.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() - dt_imu * skewSymmetric(gyro);
 
     // Q
     Eigen::MatrixXd Q = Eigen::Matrix<double, 6, 6>::Identity();
@@ -113,10 +117,11 @@ public:
     Q.block<3, 3>(3, 3) = var_imu_w_ * Q.block<3, 3>(3, 3);
     Q = Q * (dt_imu * dt_imu);
 
-    // L
+    // L - Noise Jacobian
     Eigen::MatrixXd L = Eigen::Matrix<double, num_error_state_, 6>::Zero();
-    L.block<3, 3>(3, 0) = Eigen::Matrix3d::Identity();
-    L.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
+    L.block<3, 3>(0, 0) = -0.5 * dt_imu * dt_imu * rot_mat;
+    L.block<3, 3>(3, 0) = -dt_imu * rot_mat;
+    L.block<3, 3>(6, 3) = dt_imu * Eigen::Matrix3d::Identity();
 
     P_ = F * P_ * F.transpose() + L * Q * L.transpose();
   }
@@ -158,19 +163,26 @@ public:
       pow(dx(ERROR_STATE::DTHY), 2) +
       pow(dx(ERROR_STATE::DTHZ), 2));
 
-    if (norm_quat < 1e-10) {
-      Eigen::Quaterniond dq = Eigen::Quaterniond(cos(norm_quat / 2), 0, 0, 0);
-      Eigen::Quaterniond q = Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    // Quaternion update using error state
+    Eigen::Vector3d dth = dx.segment(ERROR_STATE::DTHX, 3);
+    Eigen::Quaterniond q = Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    
+    if (norm_quat < 1e-8) {
+      // Small angle approximation
+      Eigen::Quaterniond dq(1.0, 0.5 * dth.x(), 0.5 * dth.y(), 0.5 * dth.z());
+      dq.normalize();
       Eigen::Quaterniond q_new = q * dq;
+      q_new.normalize();
       x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
     } else {
+      // Full quaternion update
       Eigen::Quaterniond dq = Eigen::Quaterniond(
         cos(norm_quat / 2),
-        sin(norm_quat / 2) * dx(ERROR_STATE::DTHX) / norm_quat,
-        sin(norm_quat / 2) * dx(ERROR_STATE::DTHY) / norm_quat,
-        sin(norm_quat / 2) * dx(ERROR_STATE::DTHZ) / norm_quat);
-      Eigen::Quaterniond q = Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+        sin(norm_quat / 2) * dth.x() / norm_quat,
+        sin(norm_quat / 2) * dth.y() / norm_quat,
+        sin(norm_quat / 2) * dth.z() / norm_quat);
       Eigen::Quaterniond q_new = q * dq;
+      q_new.normalize();
       x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
     }
 
@@ -228,6 +240,15 @@ private:
   const Eigen::Vector3d gravity_{0, 0, 9.80665};
 
   double tau_gyro_bias_;
+
+  // Helper function for skew symmetric matrix
+  Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v) {
+    Eigen::Matrix3d skew;
+    skew << 0, -v.z(), v.y(),
+            v.z(), 0, -v.x(),
+            -v.y(), v.x(), 0;
+    return skew;
+  }
 
   enum STATE
   {
