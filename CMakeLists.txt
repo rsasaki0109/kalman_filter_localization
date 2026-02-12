@@ -117,16 +117,9 @@ install(TARGETS
 
 
 # export
-ament_export_dependencies(ament_cmake)
 ament_export_dependencies(rclcpp)
-ament_export_dependencies(rclcpp_components)
-ament_export_dependencies(tf2_ros)
-ament_export_dependencies(nav_msgs)
-ament_export_dependencies(sensor_msgs)
-ament_export_dependencies(geometry_msgs)
 ament_export_dependencies(eigen3_cmake_module)
 ament_export_dependencies(Eigen3)
-ament_export_dependencies(rosidl_default_runtime)
 ament_export_include_directories(include)
 ament_export_targets(export_${PROJECT_NAME})
 
