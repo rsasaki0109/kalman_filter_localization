@@ -78,3 +78,60 @@ TEST(EKFEstimatorCore, ObservationUpdateValidation)
     ekf.observationUpdateWithStatus(y_bad, variance_valid),
     EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
 }
+
+TEST(EKFEstimatorCore, PredictionUpdateWithStatusTimeBaseAndReset)
+{
+  EKFEstimator ekf;
+  const Eigen::Vector3d gyro = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d acc = Eigen::Vector3d::Zero();
+
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(10.0, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kSkippedNoTimeBase);
+
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(10.0, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kNonPositiveDt);
+
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(10.01, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+
+  ekf.resetImuTimeBase();
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(20.0, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kSkippedNoTimeBase);
+}
+
+TEST(EKFEstimatorCore, PredictionUpdateWithStatusRecoversAfterLargeDt)
+{
+  EKFEstimator ekf;
+  const Eigen::Vector3d gyro = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d acc = Eigen::Vector3d::Zero();
+
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(0.0, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kSkippedNoTimeBase);
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(1.0, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kDtTooLarge);
+
+  EXPECT_EQ(
+    ekf.predictionUpdateWithStatus(1.01, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+}
+
+TEST(EKFEstimatorCore, SetInitialXCheckedValidatesSize)
+{
+  EKFEstimator ekf;
+
+  Eigen::VectorXd x_bad(ekf.getNumState() - 1);
+  x_bad.setZero();
+  EXPECT_FALSE(ekf.setInitialXChecked(x_bad));
+
+  Eigen::VectorXd x_ok(ekf.getNumState());
+  x_ok.setZero();
+  // Last element is qw.
+  x_ok(ekf.getNumState() - 1) = 1.0;
+  EXPECT_TRUE(ekf.setInitialXChecked(x_ok));
+}
