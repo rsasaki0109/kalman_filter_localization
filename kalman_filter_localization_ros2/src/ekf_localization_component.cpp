@@ -54,7 +54,7 @@
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
-#include <kalman_filter_localization/ekf.hpp>
+#include <kalman_filter_localization/core/ekf.hpp>
 
 namespace kalman_filter_localization
 {
@@ -119,7 +119,7 @@ struct EkfLocalizationComponent::Impl
         initial_pose_received_ = true;
         current_pose_ = *msg;
 
-        EKFEstimator::State state;
+        core::EKFEstimator::State state;
         state.position = Eigen::Vector3d(
           current_pose_.pose.position.x,
           current_pose_.pose.position.y,
@@ -275,13 +275,13 @@ struct EkfLocalizationComponent::Impl
       imu_msg.linear_acceleration.z);
 
     const auto status = ekf_.predictionUpdateDt(dt_imu, gyro, linear_acceleration);
-    if (status == EKFEstimator::PredictionUpdateStatus::kNonPositiveDt) {
+    if (status == core::EKFEstimator::PredictionUpdateStatus::kNonPositiveDt) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF prediction update due to non-positive IMU dt: %f [sec]", dt_imu);
       return;
     }
-    if (status == EKFEstimator::PredictionUpdateStatus::kDtTooLarge) {
+    if (status == core::EKFEstimator::PredictionUpdateStatus::kDtTooLarge) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF prediction update due to too large IMU dt: %f [sec]", dt_imu);
@@ -300,13 +300,13 @@ struct EkfLocalizationComponent::Impl
       pose_msg.pose.position.z);
 
     const auto status = ekf_.observationUpdateWithStatus(y, variance);
-    if (status == EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+    if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF observation update due to invalid measurement (NaN/Inf)");
       return;
     }
-    if (status == EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+    if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF observation update due to invalid variance (need finite positive)");
@@ -361,7 +361,7 @@ struct EkfLocalizationComponent::Impl
   double previous_time_imu_{0.0};
   bool has_previous_time_imu_{false};
 
-  EKFEstimator ekf_;
+  core::EKFEstimator ekf_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
