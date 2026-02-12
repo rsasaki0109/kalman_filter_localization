@@ -65,6 +65,13 @@ public:
     kDtTooLarge,
   };
 
+  enum class ObservationUpdateStatus : std::uint8_t
+  {
+    kUpdated = 0,
+    kInvalidMeasurement,
+    kInvalidVariance,
+  };
+
   EKFEstimator()
   : previous_time_imu_(0.0),
     has_previous_time_imu_(false),
@@ -207,6 +214,21 @@ public:
     const Eigen::Vector3d & variance
   )
   {
+    (void)observationUpdateWithStatus(y, variance);
+  }
+
+  ObservationUpdateStatus observationUpdateWithStatus(
+    const Eigen::Vector3d & y,
+    const Eigen::Vector3d & variance
+  )
+  {
+    if (!y.allFinite()) {
+      return ObservationUpdateStatus::kInvalidMeasurement;
+    }
+    if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
+      return ObservationUpdateStatus::kInvalidVariance;
+    }
+
     // error state
     Eigen::Matrix3d R;
     R <<
@@ -247,6 +269,7 @@ public:
     }
 
     P_ = (EigenMatrix9d::Identity() - K * H) * P_;
+    return ObservationUpdateStatus::kUpdated;
   }
 
   void setTauGyroBias(const double tau_gyro_bias)
@@ -264,9 +287,18 @@ public:
     var_imu_acc_ = var_imu_acc;
   }
 
+  bool setInitialXChecked(const Eigen::Ref<const Eigen::VectorXd> & x)
+  {
+    if (x.size() != num_state_) {
+      return false;
+    }
+    x_ = x;
+    return true;
+  }
+
   void setInitialX(Eigen::VectorXd x)
   {
-    x_ = x;
+    (void)setInitialXChecked(x);
   }
 
   // Typed state accessors. These avoid leaking the internal state vector layout.
