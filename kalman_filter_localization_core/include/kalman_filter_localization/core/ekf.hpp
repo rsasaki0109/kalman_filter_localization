@@ -41,6 +41,10 @@
 // NOTE:
 // This file intentionally contains no ROS2 includes so it can be reused in
 // non-ROS2 contexts.
+namespace kalman_filter_localization
+{
+namespace core
+{
 class EKFEstimator
 {
 public:
@@ -355,17 +359,22 @@ public:
     return x_;
   }
 
-  Eigen::MatrixXd getCoveriance()
+  Eigen::VectorXd getX() const
+  {
+    return x_;
+  }
+
+  Eigen::MatrixXd getCoveriance() const
   {
     return getCovariance();
   }
 
-  Eigen::MatrixXd getCovariance()
+  Eigen::MatrixXd getCovariance() const
   {
     return P_;
   }
 
-  int getNumState()
+  int getNumState() const
   {
     return num_state_;
   }
@@ -401,5 +410,12 @@ private:
     DTHX = 6, DTHY = 7, DTHZ = 8,
   };
 };
+}  // namespace core
+
+using EKFEstimator = core::EKFEstimator;
+}  // namespace kalman_filter_localization
+
+// Backward-compatible global alias (original API).
+using EKFEstimator = kalman_filter_localization::core::EKFEstimator;
 
 #endif  // KALMAN_FILTER_LOCALIZATION__CORE__EKF_HPP_
