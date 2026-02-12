@@ -70,87 +70,21 @@ extern "C" {
 }  // extern "C"
 #endif
 
-#include <Eigen/Core>
+#include <memory>
 
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2/convert.h>
-#include <tf2/transform_datatypes.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
-
-#include <string>
-
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <geometry_msgs/msg/transform.hpp>
-#include <geometry_msgs/msg/transform_stamped.hpp>
-#include <geometry_msgs/msg/vector3_stamped.hpp>
-#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <tf2_eigen/tf2_eigen.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-// #include <tf2_sensor_msgs/tf2_sensor_msgs.h>
-#include <sensor_msgs/msg/imu.hpp>
-
-#include <rclcpp_components/register_node_macro.hpp>
-
-#include <kalman_filter_localization/ekf.hpp>
 
 namespace kalman_filter_localization
 {
-class EkfLocalizationComponent : public rclcpp::Node
+class KFL_EKFL_PUBLIC EkfLocalizationComponent : public rclcpp::Node
 {
 public:
-  KFL_EKFL_PUBLIC
   explicit EkfLocalizationComponent(const rclcpp::NodeOptions & options);
+  ~EkfLocalizationComponent() override;
 
 private:
-  std::string reference_frame_id_;
-  std::string robot_frame_id_;
-  std::string initial_pose_topic_;
-  std::string imu_topic_;
-  std::string odom_topic_;
-  std::string gnss_pose_topic_;
-  int pub_period_;
-
-  double var_imu_w_;
-  double var_imu_acc_;
-  double var_gnss_xy_;
-  double var_gnss_z_;
-  Eigen::Vector3d var_gnss_;
-  double var_odom_xyz_;
-  Eigen::Vector3d var_odom_;
-  bool use_gnss_;
-  bool use_odom_;
-
-  bool initial_pose_recieved_{false};
-
-  geometry_msgs::msg::PoseStamped current_pose_;
-  rclcpp::Time current_stamp_;
-
-  // IMU time base (kept in ROS2 layer so the core EKF can operate on dt only).
-  double previous_time_imu_{0.0};
-  bool has_previous_time_imu_{false};
-
-  EKFEstimator ekf_;
-
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
-  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
-  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
-  rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::Clock clock_;
-  tf2_ros::Buffer tfbuffer_;
-  tf2_ros::TransformListener listener_;
-  void predictUpdate(const sensor_msgs::msg::Imu & imu_msg);
-  void measurementUpdate(
-    const geometry_msgs::msg::PoseStamped & pose_msg,
-    const Eigen::Vector3d & variance);
-  void broadcastPose();
-
-  geometry_msgs::msg::PoseStamped current_pose_odom_;
-  Eigen::Matrix4d previous_odom_mat_{Eigen::Matrix4d::Identity()};
-  bool has_previous_odom_{false};
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 }  // namespace kalman_filter_localization
 
