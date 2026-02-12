@@ -30,11 +30,11 @@
 // ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 #include <kalman_filter_localization/ekf_localization_component.hpp>
+
 #include <chrono>
-#include <vector>
 #include <memory>
 #include <string>
-using namespace std::chrono_literals;
+#include <vector>
 
 namespace kalman_filter_localization
 {
@@ -88,7 +88,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   auto initial_pose_callback =
     [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
     {
-      std::cout << "initial pose callback" << std::endl;
+      RCLCPP_INFO(this->get_logger(), "received initial pose");
       initial_pose_recieved_ = true;
       current_pose_ = *msg;
 
@@ -101,6 +101,10 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
       x(STATE::QZ) = current_pose_.pose.orientation.z;
       x(STATE::QW) = current_pose_.pose.orientation.w;
       ekf_.setInitialX(x);
+
+      // Reset IMU dt integration base on re-initialization.
+      has_previous_time_imu_ = false;
+      previous_time_imu_ = 0.0;
     };
 
   auto imu_callback =
@@ -185,9 +189,10 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   sub_initial_pose_ =
     create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 1,
       initial_pose_callback);
+  rclcpp::SensorDataQoS imu_qos;
+  imu_qos.keep_last(1);
   sub_imu_ =
-    create_subscription<sensor_msgs::msg::Imu>(imu_topic_, 1,
-      imu_callback);
+    create_subscription<sensor_msgs::msg::Imu>(imu_topic_, imu_qos, imu_callback);
   sub_odom_ =
     create_subscription<nav_msgs::msg::Odometry>(odom_topic_, 1,
       odom_callback);
@@ -200,31 +205,53 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     std::bind(&EkfLocalizationComponent::broadcastPose, this));
 }
 
-void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu imu_msg)
+void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu & imu_msg)
 {
   current_stamp_ = imu_msg.header.stamp;
 
-  double current_time_imu = imu_msg.header.stamp.sec +
+  const double current_time_imu = imu_msg.header.stamp.sec +
     imu_msg.header.stamp.nanosec * 1e-9;
-  Eigen::Vector3d gyro = Eigen::Vector3d(
+
+  if (!has_previous_time_imu_) {
+    previous_time_imu_ = current_time_imu;
+    has_previous_time_imu_ = true;
+    return;
+  }
+  const double dt_imu = current_time_imu - previous_time_imu_;
+  // Always advance the time base to allow recovery after large/invalid dt.
+  previous_time_imu_ = current_time_imu;
+
+  const Eigen::Vector3d gyro = Eigen::Vector3d(
     imu_msg.angular_velocity.x,
     imu_msg.angular_velocity.y,
     imu_msg.angular_velocity.z);
-  Eigen::Vector3d linear_acceleration = Eigen::Vector3d(
+  const Eigen::Vector3d linear_acceleration = Eigen::Vector3d(
     imu_msg.linear_acceleration.x,
     imu_msg.linear_acceleration.y,
     imu_msg.linear_acceleration.z);
 
-  ekf_.predictionUpdate(current_time_imu, gyro, linear_acceleration);
+  const auto status = ekf_.predictionUpdateDt(dt_imu, gyro, linear_acceleration);
+  if (status == EKFEstimator::PredictionUpdateStatus::kNonPositiveDt) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), clock_, 5000,
+      "skip EKF prediction update due to non-positive IMU dt: %f [sec]", dt_imu);
+    return;
+  }
+  if (status == EKFEstimator::PredictionUpdateStatus::kDtTooLarge) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), clock_, 5000,
+      "skip EKF prediction update due to too large IMU dt: %f [sec]", dt_imu);
+    return;
+  }
 }
 
 
 void EkfLocalizationComponent::measurementUpdate(
-  const geometry_msgs::msg::PoseStamped pose_msg,
-  const Eigen::Vector3d variance)
+  const geometry_msgs::msg::PoseStamped & pose_msg,
+  const Eigen::Vector3d & variance)
 {
   current_stamp_ = pose_msg.header.stamp;
-  Eigen::Vector3d y = Eigen::Vector3d(pose_msg.pose.position.x,
+  const Eigen::Vector3d y = Eigen::Vector3d(pose_msg.pose.position.x,
       pose_msg.pose.position.y,
       pose_msg.pose.position.z);
 
