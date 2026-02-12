@@ -46,6 +46,7 @@ endif()
 add_library(ekf_localization_component SHARED
 src/ekf_localization_component.cpp
 )
+add_library(${PROJECT_NAME}::ekf_localization_component ALIAS ekf_localization_component)
 
 target_compile_definitions(ekf_localization_component PRIVATE "KFL_EKFL_BUILDING_DLL")
 target_include_directories(ekf_localization_component PUBLIC
