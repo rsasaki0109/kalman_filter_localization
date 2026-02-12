@@ -149,6 +149,7 @@ private:
 
   geometry_msgs::msg::PoseStamped current_pose_odom_;
   Eigen::Matrix4d previous_odom_mat_{Eigen::Matrix4d::Identity()};
+  bool has_previous_odom_{false};
 
 };
 }  // namespace kalman_filter_localization
