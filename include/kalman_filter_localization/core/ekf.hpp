@@ -158,7 +158,7 @@ public:
       predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
 
     // F
-    Eigen::MatrixXd F = EigenMatrix9d::Identity();
+    EigenMatrix9d F = EigenMatrix9d::Identity();
     F.block<3, 3>(0, 3) = dt_imu * Eigen::Matrix3d::Identity();
     Eigen::Matrix3d acc_skew;
     acc_skew <<
@@ -168,13 +168,14 @@ public:
     F.block<3, 3>(3, 6) = rot_mat * (-acc_skew) * dt_imu;
 
     // Q
-    Eigen::MatrixXd Q = Eigen::Matrix<double, 6, 6>::Identity();
+    Eigen::Matrix<double, 6, 6> Q = Eigen::Matrix<double, 6, 6>::Identity();
     Q.block<3, 3>(0, 0) = var_imu_acc_ * Q.block<3, 3>(0, 0);
     Q.block<3, 3>(3, 3) = var_imu_w_ * Q.block<3, 3>(3, 3);
     Q = Q * (dt_imu * dt_imu);
 
     // L
-    Eigen::MatrixXd L = Eigen::Matrix<double, num_error_state_, 6>::Zero();
+    Eigen::Matrix<double, num_error_state_, 6> L =
+      Eigen::Matrix<double, num_error_state_, 6>::Zero();
     L.block<3, 3>(3, 0) = Eigen::Matrix3d::Identity();
     L.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
 
@@ -212,10 +213,12 @@ public:
       variance.x(), 0, 0,
       0, variance.y(), 0,
       0, 0, variance.z();
-    Eigen::MatrixXd H = Eigen::Matrix<double, 3, num_error_state_>::Zero();
+    Eigen::Matrix<double, 3, num_error_state_> H =
+      Eigen::Matrix<double, 3, num_error_state_>::Zero();
     H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
-    const Eigen::MatrixXd K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
-    const Eigen::VectorXd dx = K * (y - x_.segment(STATE::X, 3));
+    const Eigen::Matrix<double, num_error_state_, 3> K =
+      P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
+    const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - x_.segment(STATE::X, 3));
 
     // state
     x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dx.segment(ERROR_STATE::DX, 3);
