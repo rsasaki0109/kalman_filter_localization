@@ -44,6 +44,19 @@
 class EKFEstimator
 {
 public:
+  struct Pose
+  {
+    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
+    Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
+  };
+
+  struct State
+  {
+    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d velocity{Eigen::Vector3d::Zero()};
+    Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
+  };
+
   enum class PredictionUpdateStatus : std::uint8_t
   {
     kUpdated = 0,
@@ -251,6 +264,55 @@ public:
   void setInitialX(Eigen::VectorXd x)
   {
     x_ = x;
+  }
+
+  // Typed state accessors. These avoid leaking the internal state vector layout.
+  void setPose(const Pose & pose)
+  {
+    setState({pose.position, getVelocity(), pose.orientation});
+  }
+
+  void setState(const State & state)
+  {
+    x_.segment(STATE::X, 3) = state.position;
+    x_.segment(STATE::VX, 3) = state.velocity;
+    const Eigen::Quaterniond q = state.orientation.normalized();
+    x_(STATE::QX) = q.x();
+    x_(STATE::QY) = q.y();
+    x_(STATE::QZ) = q.z();
+    x_(STATE::QW) = q.w();
+  }
+
+  Pose getPose() const
+  {
+    Pose pose;
+    pose.position = getPosition();
+    pose.orientation = getOrientation();
+    return pose;
+  }
+
+  State getState() const
+  {
+    State state;
+    state.position = getPosition();
+    state.velocity = getVelocity();
+    state.orientation = getOrientation();
+    return state;
+  }
+
+  Eigen::Vector3d getPosition() const
+  {
+    return x_.segment(STATE::X, 3);
+  }
+
+  Eigen::Vector3d getVelocity() const
+  {
+    return x_.segment(STATE::VX, 3);
+  }
+
+  Eigen::Quaterniond getOrientation() const
+  {
+    return Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
   }
 
   Eigen::VectorXd getX()
