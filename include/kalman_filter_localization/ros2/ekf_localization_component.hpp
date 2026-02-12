@@ -29,12 +29,27 @@
 // LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 // ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#ifndef KALMAN_FILTER_LOCALIZATION__EKF_LOCALIZATION_COMPONENT_HPP_
-#define KALMAN_FILTER_LOCALIZATION__EKF_LOCALIZATION_COMPONENT_HPP_
+#ifndef KALMAN_FILTER_LOCALIZATION__ROS2__EKF_LOCALIZATION_COMPONENT_HPP_
+#define KALMAN_FILTER_LOCALIZATION__ROS2__EKF_LOCALIZATION_COMPONENT_HPP_
 
-// Compatibility header:
-// Keep the original include path while moving ROS2-specific interfaces under
-// include/kalman_filter_localization/ros2.
-#include <kalman_filter_localization/ros2/ekf_localization_component.hpp>
+#include <memory>
 
-#endif  // KALMAN_FILTER_LOCALIZATION__EKF_LOCALIZATION_COMPONENT_HPP_
+#include <kalman_filter_localization/visibility_control.hpp>
+
+#include <rclcpp/rclcpp.hpp>
+
+namespace kalman_filter_localization
+{
+class KFL_EKFL_PUBLIC EkfLocalizationComponent : public rclcpp::Node
+{
+public:
+  explicit EkfLocalizationComponent(const rclcpp::NodeOptions & options);
+  ~EkfLocalizationComponent() override;
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+}  // namespace kalman_filter_localization
+
+#endif  // KALMAN_FILTER_LOCALIZATION__ROS2__EKF_LOCALIZATION_COMPONENT_HPP_
