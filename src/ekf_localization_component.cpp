@@ -196,18 +196,21 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     };
 
   sub_initial_pose_ =
-    create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 1,
-      initial_pose_callback);
+    create_subscription<geometry_msgs::msg::PoseStamped>(
+    initial_pose_topic_, 1,
+    initial_pose_callback);
   rclcpp::SensorDataQoS imu_qos;
   imu_qos.keep_last(1);
   sub_imu_ =
     create_subscription<sensor_msgs::msg::Imu>(imu_topic_, imu_qos, imu_callback);
   sub_odom_ =
-    create_subscription<nav_msgs::msg::Odometry>(odom_topic_, 1,
-      odom_callback);
+    create_subscription<nav_msgs::msg::Odometry>(
+    odom_topic_, 1,
+    odom_callback);
   sub_gnss_pose_ =
-    create_subscription<geometry_msgs::msg::PoseStamped>(gnss_pose_topic_, 1,
-      gnss_pose_callback);
+    create_subscription<geometry_msgs::msg::PoseStamped>(
+    gnss_pose_topic_, 1,
+    gnss_pose_callback);
   std::chrono::milliseconds period(pub_period_);
   timer_ = create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
@@ -260,9 +263,10 @@ void EkfLocalizationComponent::measurementUpdate(
   const Eigen::Vector3d & variance)
 {
   current_stamp_ = pose_msg.header.stamp;
-  const Eigen::Vector3d y = Eigen::Vector3d(pose_msg.pose.position.x,
-      pose_msg.pose.position.y,
-      pose_msg.pose.position.z);
+  const Eigen::Vector3d y = Eigen::Vector3d(
+    pose_msg.pose.position.x,
+    pose_msg.pose.position.y,
+    pose_msg.pose.position.z);
 
   const auto status = ekf_.observationUpdateWithStatus(y, variance);
   if (status == EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
