@@ -92,15 +92,18 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
       initial_pose_recieved_ = true;
       current_pose_ = *msg;
 
-      Eigen::VectorXd x = Eigen::VectorXd::Zero(ekf_.getNumState());
-      x(STATE::X) = current_pose_.pose.position.x;
-      x(STATE::Y) = current_pose_.pose.position.y;
-      x(STATE::Z) = current_pose_.pose.position.z;
-      x(STATE::QX) = current_pose_.pose.orientation.x;
-      x(STATE::QY) = current_pose_.pose.orientation.y;
-      x(STATE::QZ) = current_pose_.pose.orientation.z;
-      x(STATE::QW) = current_pose_.pose.orientation.w;
-      ekf_.setInitialX(x);
+      EKFEstimator::State state;
+      state.position = Eigen::Vector3d(
+        current_pose_.pose.position.x,
+        current_pose_.pose.position.y,
+        current_pose_.pose.position.z);
+      state.velocity = Eigen::Vector3d::Zero();
+      state.orientation = Eigen::Quaterniond(
+        current_pose_.pose.orientation.w,
+        current_pose_.pose.orientation.x,
+        current_pose_.pose.orientation.y,
+        current_pose_.pose.orientation.z);
+      ekf_.setState(state);
 
       // Reset IMU dt integration base on re-initialization.
       has_previous_time_imu_ = false;
@@ -261,16 +264,16 @@ void EkfLocalizationComponent::measurementUpdate(
 void EkfLocalizationComponent::broadcastPose()
 {
   if (initial_pose_recieved_) {
-    auto x = ekf_.getX();
+    const auto pose = ekf_.getPose();
     current_pose_.header.stamp = current_stamp_;
     current_pose_.header.frame_id = reference_frame_id_;
-    current_pose_.pose.position.x = x(STATE::X);
-    current_pose_.pose.position.y = x(STATE::Y);
-    current_pose_.pose.position.z = x(STATE::Z);
-    current_pose_.pose.orientation.x = x(STATE::QX);
-    current_pose_.pose.orientation.y = x(STATE::QY);
-    current_pose_.pose.orientation.z = x(STATE::QZ);
-    current_pose_.pose.orientation.w = x(STATE::QW);
+    current_pose_.pose.position.x = pose.position.x();
+    current_pose_.pose.position.y = pose.position.y();
+    current_pose_.pose.position.z = pose.position.z();
+    current_pose_.pose.orientation.x = pose.orientation.x();
+    current_pose_.pose.orientation.y = pose.orientation.y();
+    current_pose_.pose.orientation.z = pose.orientation.z();
+    current_pose_.pose.orientation.w = pose.orientation.w();
     current_pose_pub_->publish(current_pose_);
   }
 }
