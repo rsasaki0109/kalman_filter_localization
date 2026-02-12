@@ -35,8 +35,8 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
+#include <cstdint>
 #include <cmath>
-#include <iostream>
 
 // NOTE:
 // This file intentionally contains no ROS2 includes so it can be reused in
@@ -44,6 +44,14 @@
 class EKFEstimator
 {
 public:
+  enum class PredictionUpdateStatus : std::uint8_t
+  {
+    kUpdated = 0,
+    kSkippedNoTimeBase,
+    kNonPositiveDt,
+    kDtTooLarge,
+  };
+
   EKFEstimator()
   : previous_time_imu_(0.0),
     has_previous_time_imu_(false),
@@ -67,7 +75,18 @@ public:
 * covariance
 * P_{k} = F_k P_{k-1} F_k^T + L Q_k L^T
 */
+  // Backward-compatible API: computes dt from timestamp internally and ignores status.
   void predictionUpdate(
+    const double current_time_imu,
+    const Eigen::Vector3d & gyro,
+    const Eigen::Vector3d & linear_acceleration
+  )
+  {
+    (void)predictionUpdateWithStatus(current_time_imu, gyro, linear_acceleration);
+  }
+
+  // Returns status instead of printing/logging.
+  PredictionUpdateStatus predictionUpdateWithStatus(
     const double current_time_imu,
     const Eigen::Vector3d & gyro,
     const Eigen::Vector3d & linear_acceleration
@@ -77,18 +96,28 @@ public:
     if (!has_previous_time_imu_) {
       previous_time_imu_ = current_time_imu;
       has_previous_time_imu_ = true;
-      return;
+      return PredictionUpdateStatus::kSkippedNoTimeBase;
     }
 
     const double dt_imu = current_time_imu - previous_time_imu_;
+    // Always advance the internal time base to allow recovery from large dt.
     previous_time_imu_ = current_time_imu;
+    return predictionUpdateDt(dt_imu, gyro, linear_acceleration);
+  }
+
+  // Preferred API for non-ROS2 usage: caller supplies dt and handles errors/logging.
+  PredictionUpdateStatus predictionUpdateDt(
+    const double dt_imu,
+    const Eigen::Vector3d & gyro,
+    const Eigen::Vector3d & linear_acceleration
+  )
+  {
+    constexpr double kMaxDtSec = 0.5;
     if (dt_imu <= 0.0) {
-      std::cout << "imu time interval is non-positive" << std::endl;
-      return;
+      return PredictionUpdateStatus::kNonPositiveDt;
     }
-    if (dt_imu > 0.5 /* [sec] */) {
-      std::cout << "imu time interval is too large" << std::endl;
-      return;
+    if (dt_imu > kMaxDtSec) {
+      return PredictionUpdateStatus::kDtTooLarge;
     }
 
     const Eigen::Quaterniond quat_wdt = Eigen::Quaterniond(
@@ -137,6 +166,13 @@ public:
     L.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
 
     P_ = F * P_ * F.transpose() + L * Q * L.transpose();
+    return PredictionUpdateStatus::kUpdated;
+  }
+
+  void resetImuTimeBase()
+  {
+    previous_time_imu_ = 0.0;
+    has_previous_time_imu_ = false;
   }
 
 /*
@@ -224,6 +260,11 @@ public:
 
   Eigen::MatrixXd getCoveriance()
   {
+    return getCovariance();
+  }
+
+  Eigen::MatrixXd getCovariance()
+  {
     return P_;
   }
 
@@ -265,4 +306,3 @@ private:
 };
 
 #endif  // KALMAN_FILTER_LOCALIZATION__CORE__EKF_HPP_
-
