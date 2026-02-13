@@ -36,6 +36,7 @@ find_package(Eigen3 REQUIRED)
 # without pulling in ROS2 deps.
 add_library(kalman_filter_localization_core INTERFACE)
 add_library(kalman_filter_localization::core ALIAS kalman_filter_localization_core)
+set_target_properties(kalman_filter_localization_core PROPERTIES EXPORT_NAME core)
 target_include_directories(kalman_filter_localization_core INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -94,6 +95,11 @@ install(
 )
 
 install(
+  TARGETS kalman_filter_localization_core
+  EXPORT export_${PROJECT_NAME}
+)
+
+install(
   DIRECTORY launch param
   DESTINATION share/${PROJECT_NAME}
 )
@@ -118,8 +124,10 @@ ament_export_dependencies(tf2_ros)
 ament_export_dependencies(nav_msgs)
 ament_export_dependencies(sensor_msgs)
 ament_export_dependencies(geometry_msgs)
+ament_export_dependencies(eigen3_cmake_module)
 ament_export_dependencies(Eigen3)
 ament_export_dependencies(rosidl_default_runtime)
 ament_export_include_directories(include)
+ament_export_targets(export_${PROJECT_NAME})
 
 ament_package()
