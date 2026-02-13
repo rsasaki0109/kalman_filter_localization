@@ -150,13 +150,6 @@ private:
   geometry_msgs::msg::PoseStamped current_pose_odom_;
   Eigen::Matrix4d previous_odom_mat_{Eigen::Matrix4d::Identity()};
 
-
-  enum STATE
-  {
-    X  = 0, Y = 1, Z = 2,
-    VX = 3, VY = 4, VZ = 5,
-    QX = 6, QY = 7, QZ = 8, QW = 9,
-  };
 };
 }  // namespace kalman_filter_localization
 
