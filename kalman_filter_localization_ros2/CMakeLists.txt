@@ -17,6 +17,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(kalman_filter_localization_core REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(tf2 REQUIRED)
@@ -26,24 +27,10 @@ find_package(tf2_eigen REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(eigen3_cmake_module REQUIRED)
-find_package(Eigen3 REQUIRED)
+# NOTE: Eigen is pulled in transitively via kalman_filter_localization_core.
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
-
-# Header-only, ROS2-independent core target. This keeps non-ROS logic reusable
-# without pulling in ROS2 deps.
-add_library(kalman_filter_localization_core INTERFACE)
-add_library(kalman_filter_localization::core ALIAS kalman_filter_localization_core)
-set_target_properties(kalman_filter_localization_core PROPERTIES EXPORT_NAME core)
-target_include_directories(kalman_filter_localization_core INTERFACE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(kalman_filter_localization_core INTERFACE
-  Eigen3::Eigen
-)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -54,14 +41,6 @@ if(BUILD_TESTING)
   # uncomment the line when this package is not in a git repo
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
-
-  find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_ekf_core
-    test/test_ekf_core.cpp
-  )
-  # ament_add_gtest uses the plain target_link_libraries() signature internally,
-  # so keep using the plain signature here too (CMake forbids mixing styles).
-  target_link_libraries(test_ekf_core kalman_filter_localization::core)
 endif()
 
 add_library(ekf_localization_component SHARED
@@ -69,9 +48,13 @@ src/ekf_localization_component.cpp
 )
 
 target_compile_definitions(ekf_localization_component PRIVATE "KFL_EKFL_BUILDING_DLL")
+target_include_directories(ekf_localization_component PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
 # ament_target_dependencies uses the plain target_link_libraries() signature
 # internally, so keep using the plain signature here too.
-target_link_libraries(ekf_localization_component kalman_filter_localization::core)
+target_link_libraries(ekf_localization_component kalman_filter_localization_core::core)
 ament_target_dependencies(ekf_localization_component
   rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
@@ -95,11 +78,6 @@ install(
 )
 
 install(
-  TARGETS kalman_filter_localization_core
-  EXPORT export_${PROJECT_NAME}
-)
-
-install(
   DIRECTORY launch param
   DESTINATION share/${PROJECT_NAME}
 )
@@ -118,9 +96,6 @@ install(TARGETS
 
 # export
 ament_export_dependencies(rclcpp)
-ament_export_dependencies(eigen3_cmake_module)
-ament_export_dependencies(Eigen3)
 ament_export_include_directories(include)
-ament_export_targets(export_${PROJECT_NAME})
 
 ament_package()
