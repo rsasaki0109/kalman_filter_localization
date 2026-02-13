@@ -126,6 +126,10 @@ private:
   geometry_msgs::msg::PoseStamped current_pose_;
   rclcpp::Time current_stamp_;
 
+  // IMU time base (kept in ROS2 layer so the core EKF can operate on dt only).
+  double previous_time_imu_{0.0};
+  bool has_previous_time_imu_{false};
+
   EKFEstimator ekf_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
@@ -137,10 +141,10 @@ private:
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;
   tf2_ros::TransformListener listener_;
-  void predictUpdate(const sensor_msgs::msg::Imu imu_msg);
+  void predictUpdate(const sensor_msgs::msg::Imu & imu_msg);
   void measurementUpdate(
-    const geometry_msgs::msg::PoseStamped pose_msg,
-    const Eigen::Vector3d variance);
+    const geometry_msgs::msg::PoseStamped & pose_msg,
+    const Eigen::Vector3d & variance);
   void broadcastPose();
 
   geometry_msgs::msg::PoseStamped current_pose_odom_;
