@@ -15,11 +15,6 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   #add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-install(
-  DIRECTORY launch param
-  DESTINATION share/${PROJECT_NAME}
-)
-
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -36,6 +31,18 @@ find_package(Eigen3 REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 
+# Header-only, ROS2-independent core target. This keeps non-ROS logic reusable
+# without pulling in ROS2 deps.
+add_library(kalman_filter_localization_core INTERFACE)
+add_library(kalman_filter_localization::core ALIAS kalman_filter_localization_core)
+target_include_directories(kalman_filter_localization_core INTERFACE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(kalman_filter_localization_core INTERFACE
+  Eigen3::Eigen
+)
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
@@ -50,10 +57,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_ekf_core
     test/test_ekf_core.cpp
   )
-  target_include_directories(test_ekf_core PRIVATE
-    include
-    ${EIGEN3_INCLUDE_DIRS}
-  )
+  # ament_add_gtest uses the plain target_link_libraries() signature internally,
+  # so keep using the plain signature here too (CMake forbids mixing styles).
+  target_link_libraries(test_ekf_core kalman_filter_localization::core)
 endif()
 
 add_library(ekf_localization_component SHARED
@@ -61,6 +67,9 @@ src/ekf_localization_component.cpp
 )
 
 target_compile_definitions(ekf_localization_component PRIVATE "KFL_EKFL_BUILDING_DLL")
+# ament_target_dependencies uses the plain target_link_libraries() signature
+# internally, so keep using the plain signature here too.
+target_link_libraries(ekf_localization_component kalman_filter_localization::core)
 ament_target_dependencies(ekf_localization_component
   rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
@@ -73,11 +82,6 @@ ekf_localization_component)
 
 ament_target_dependencies(ekf_localization_node
   rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
-
-include_directories(
-  include
-  ${EIGEN3_INCLUDE_DIRS}
-)
 
 rclcpp_components_register_nodes(ekf_localization_component
   "kalman_filter_localization::EkfLocalizationComponent")
