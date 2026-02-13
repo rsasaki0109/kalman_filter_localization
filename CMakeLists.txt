@@ -45,6 +45,15 @@ if(BUILD_TESTING)
   # uncomment the line when this package is not in a git repo
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_ekf_core
+    test/test_ekf_core.cpp
+  )
+  target_include_directories(test_ekf_core PRIVATE
+    include
+    ${EIGEN3_INCLUDE_DIRS}
+  )
 endif()
 
 add_library(ekf_localization_component SHARED
