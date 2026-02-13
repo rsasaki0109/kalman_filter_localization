@@ -26,6 +26,7 @@ find_package(tf2_eigen REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -117,6 +118,7 @@ ament_export_dependencies(tf2_ros)
 ament_export_dependencies(nav_msgs)
 ament_export_dependencies(sensor_msgs)
 ament_export_dependencies(geometry_msgs)
+ament_export_dependencies(Eigen3)
 ament_export_dependencies(rosidl_default_runtime)
 ament_export_include_directories(include)
 
