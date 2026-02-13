@@ -108,6 +108,11 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
       // Reset IMU dt integration base on re-initialization.
       has_previous_time_imu_ = false;
       previous_time_imu_ = 0.0;
+
+      // Reset odom baseline too.
+      current_pose_odom_ = current_pose_;
+      has_previous_odom_ = false;
+      previous_odom_mat_ = Eigen::Matrix4d::Identity();
     };
 
   auto imu_callback =
@@ -158,9 +163,10 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
         Eigen::Affine3d affine;
         tf2::fromMsg(msg->pose.pose, affine);
         Eigen::Matrix4d odom_mat = affine.matrix();
-        if (previous_odom_mat_ == Eigen::Matrix4d::Identity()) {
+        if (!has_previous_odom_) {
           current_pose_odom_ = current_pose_;
           previous_odom_mat_ = odom_mat;
+          has_previous_odom_ = true;
           return;
         }
 
@@ -258,7 +264,19 @@ void EkfLocalizationComponent::measurementUpdate(
       pose_msg.pose.position.y,
       pose_msg.pose.position.z);
 
-  ekf_.observationUpdate(y, variance);
+  const auto status = ekf_.observationUpdateWithStatus(y, variance);
+  if (status == EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), clock_, 5000,
+      "skip EKF observation update due to invalid measurement (NaN/Inf)");
+    return;
+  }
+  if (status == EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), clock_, 5000,
+      "skip EKF observation update due to invalid variance (need finite positive)");
+    return;
+  }
 }
 
 void EkfLocalizationComponent::broadcastPose()
