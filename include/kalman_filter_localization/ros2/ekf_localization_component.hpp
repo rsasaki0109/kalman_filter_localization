@@ -34,7 +34,7 @@
 
 #include <memory>
 
-#include <kalman_filter_localization/visibility_control.hpp>
+#include <kalman_filter_localization/ros2/visibility_control.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 
