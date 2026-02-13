@@ -1,16 +1,43 @@
-# Kalman Filter Localization  
-Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odometry(Visual Odometry/Lidar Odometry).
+# Kalman Filter Localization
+This repository contains two packages:
+
+- `kalman_filter_localization` (ROS2): EKF localization node/component using GNSS/IMU/Odometry.
+- `kalman_filter_localization_core` (ROS2-free): header-only EKF core library + unit tests.
+
+## Build
+```bash
+cd /path/to/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-up-to kalman_filter_localization
+```
+
+## Test
+```bash
+cd /path/to/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon test --packages-select kalman_filter_localization_core kalman_filter_localization --ctest-args --output-on-failure
+```
+
+## Using Core Library
+```cpp
+#include <kalman_filter_localization/core/ekf.hpp>
+```
+
+```cmake
+find_package(kalman_filter_localization_core REQUIRED)
+target_link_libraries(your_target kalman_filter_localization_core::core)
+```
 
 ## node
 ekf_localization_node
 - input  
-/initial_pose (geometry_msgs/PoseStamed)   
-/gnss_pose  (geometry_msgs/PoseStamed)   
-/imu  (sensor_msgs/Imu)  
-/odom (nav_msgs/Odometry)  
-/tf(/base_link(robot frame) → /imu_link(imu frame))  
+- ekf_localization/initial_pose (geometry_msgs/PoseStamped)  
+- ekf_localization/gnss_pose (geometry_msgs/PoseStamped)  
+- ekf_localization/imu (sensor_msgs/Imu)  
+- ekf_localization/odom (nav_msgs/Odometry)  
+- tf (e.g. base_link (robot frame) -> imu_link (imu frame))  
 - output  
-/curent_pose (geometry_msgs/PoseStamped)
+- ekf_localization/current_pose (geometry_msgs/PoseStamped)
 
 ## params
 
@@ -30,7 +57,7 @@ ekf_localization_node
 [rosbag demo data(ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
 
 ```
-rviz2 -d src/kalman_filter_localization/rviz/ekfl_demo.rviz
+rviz2 -d $(ros2 pkg prefix --share kalman_filter_localization)/rviz/ekfl_demo.rviz
 ```
 
 ```
@@ -56,4 +83,3 @@ blue:initial pose, red:gnss pose, green: fusion pose
 - Daniel Choukroun et al,"A Novel Quaternion Kalman Filter",2006
 - An Improved EKF - The Error State Extended Kalman Filter
 - Weikun Zhen, Sam Zeng, and Sebastian Scherer. "Robust Localization and Localizability Estimation with a Rotating Laser Scanner" , 2017.
-
