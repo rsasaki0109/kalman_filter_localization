@@ -21,6 +21,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 RECORD_SCRIPT = SCRIPT_DIR / "record_pose_csv.py"
 EVAL_SCRIPT = SCRIPT_DIR / "evaluate_trajectory.py"
 NAVSATFIX_SCRIPT = SCRIPT_DIR / "navsatfix_to_pose.py"
+PLOT_SCRIPT = SCRIPT_DIR / "plot_pose_csv.py"
 
 
 @dataclass
@@ -126,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--estimated-topic", default="/ekf_localization/current_pose")
     p.add_argument("--ground-truth-topic", default="/gnss_pose")
     p.add_argument("--ground-truth-msg-type", choices=["pose_stamped", "odometry"], default="pose_stamped")
+    p.add_argument(
+        "--attitude-reference-topic",
+        default=None,
+        help="optional topic to record as attitude reference CSV for plotting (e.g. IMU orientation topic)",
+    )
+    p.add_argument(
+        "--attitude-reference-msg-type",
+        choices=["pose_stamped", "odometry", "imu"],
+        default="imu",
+        help="message type for --attitude-reference-topic (default: imu)",
+    )
+    p.add_argument("--attitude-reference-qos-depth", type=int, default=10)
 
     p.add_argument("--initial-pose-topic", default="/ekf_localization/initial_pose")
     p.add_argument("--initial-pose", default="0,0,0,0,0,0,1")
@@ -174,6 +187,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-max-time-gap-sec", type=float, default=0.1)
     p.add_argument("--max-runs", type=int, default=0, help="0 means all combinations")
     p.add_argument("--run-prefix", default="run")
+    p.add_argument(
+        "--plot-best",
+        action="store_true",
+        default=False,
+        help="generate plots for the best run (requires tools/plot_pose_csv.py + matplotlib)",
+    )
     return p
 
 
@@ -244,6 +263,7 @@ def main() -> int:
 
         est_csv = run_dir / "estimated.csv"
         gt_csv = run_dir / "ground_truth.csv"
+        att_csv = run_dir / "attitude_reference.csv"
         metrics_json = run_dir / "metrics.json"
 
         processes: List[ManagedProcess] = []
@@ -311,6 +331,27 @@ def main() -> int:
             processes.append(
                 start_background_process("record_gt", rec_gt_cmd, run_dir / "record_gt.log")
             )
+
+            if args.attitude_reference_topic:
+                rec_att_cmd = [
+                    sys.executable,
+                    str(RECORD_SCRIPT),
+                    "--topic",
+                    args.attitude_reference_topic,
+                    "--msg-type",
+                    args.attitude_reference_msg_type,
+                    "--output",
+                    str(att_csv),
+                    "--qos-depth",
+                    str(args.attitude_reference_qos_depth),
+                ]
+                processes.append(
+                    start_background_process(
+                        "record_attitude_ref",
+                        rec_att_cmd,
+                        run_dir / "record_attitude_ref.log",
+                    )
+                )
 
             time.sleep(args.startup_sec)
 
@@ -489,6 +530,37 @@ def main() -> int:
         print(f"  rmse_3d_m: {float(best['rmse_3d_m']):.6f}")
         best_params = {k: best[k] for k in keys}
         print(f"  params: {best_params}")
+
+        if args.plot_best and PLOT_SCRIPT.exists():
+            best_dir = args.output_dir / str(best["run_id"])
+            plot_cmd = [
+                sys.executable,
+                str(PLOT_SCRIPT),
+                "--estimated-csv",
+                str(best_dir / "estimated.csv"),
+                "--ground-truth-csv",
+                str(best_dir / "ground_truth.csv"),
+                "--output-dir",
+                str(best_dir),
+                "--prefix",
+                str(best["run_id"]),
+            ]
+            if (best_dir / "attitude_reference.csv").exists():
+                plot_cmd.extend(
+                    ["--attitude-reference-csv", str(best_dir / "attitude_reference.csv")]
+                )
+            plot_result = subprocess.run(
+                plot_cmd,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            (best_dir / "plot_pose_csv.log").write_text(plot_result.stdout, encoding="utf-8")
+            if plot_result.returncode == 0:
+                print(f"best_run_plots: {best_dir}")
+            else:
+                print(f"  warning: plot_pose_csv failed (code={plot_result.returncode})")
     else:
         print("\nNo successful evaluations.")
 

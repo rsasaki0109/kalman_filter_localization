@@ -1,0 +1,23 @@
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      # Istanbul all-sensors bags appear to publish gravity-compensated acceleration.
+      # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
+      gravity_mps2: 0.0
+
+      # Start from defaults; tune with tools/run_open_data_sweep.py as needed.
+      var_imu_w: 0.01
+      var_imu_acc: 0.01
+      max_imu_dt_sec: 0.5
+      var_gnss_xy: 0.1
+      var_gnss_z: 0.15
+      var_odom_xyz: 0.2
+
+      use_gnss: true
+      use_odom: false
