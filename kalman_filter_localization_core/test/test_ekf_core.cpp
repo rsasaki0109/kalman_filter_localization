@@ -135,3 +135,21 @@ TEST(EKFEstimatorCore, SetInitialXCheckedValidatesSize)
   x_ok(ekf.getNumState() - 1) = 1.0;
   EXPECT_TRUE(ekf.setInitialXChecked(x_ok));
 }
+
+TEST(EKFEstimatorCore, MaxPredictionDtSecConfig)
+{
+  EKFEstimator ekf;
+  const Eigen::Vector3d gyro = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d acc = Eigen::Vector3d::Zero();
+
+  EXPECT_DOUBLE_EQ(ekf.getMaxPredictionDtSec(), 0.5);
+  EXPECT_FALSE(ekf.setMaxPredictionDtSec(0.0));
+  EXPECT_FALSE(ekf.setMaxPredictionDtSec(-1.0));
+  EXPECT_FALSE(ekf.setMaxPredictionDtSec(std::numeric_limits<double>::infinity()));
+  EXPECT_TRUE(ekf.setMaxPredictionDtSec(1.5));
+  EXPECT_DOUBLE_EQ(ekf.getMaxPredictionDtSec(), 1.5);
+
+  EXPECT_EQ(
+    ekf.predictionUpdateDt(1.0, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+}

@@ -8,7 +8,9 @@ ekf_localization:
       pub_period: 10
       var_imu_w: 0.01
       var_imu_acc: 0.01
-      var_gnss: 0.1
-      var_odom: 0.1
+      max_imu_dt_sec: 0.5
+      var_gnss_xy: 0.1
+      var_gnss_z: 0.15
+      var_odom_xyz: 0.2
       use_gnss: true
       use_odom: false
