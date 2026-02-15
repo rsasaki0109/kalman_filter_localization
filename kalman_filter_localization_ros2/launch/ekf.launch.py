@@ -44,6 +44,12 @@ def generate_launch_description():
             get_package_share_directory('kalman_filter_localization'),
             'param',
             'ekf.yaml'))
+    robot_frame_id = launch.substitutions.LaunchConfiguration(
+        'robot_frame_id',
+        default='base_link')
+    imu_frame_id = launch.substitutions.LaunchConfiguration(
+        'imu_frame_id',
+        default='imu_link')
 
     ekf = launch_ros.actions.Node(
         package='kalman_filter_localization',
@@ -57,7 +63,7 @@ def generate_launch_description():
     tf = launch_ros.actions.Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        arguments=['0', '0', '0', '0', '0', '0', '1', 'base_link', 'imu_link']
+        arguments=['0', '0', '0', '0', '0', '0', '1', robot_frame_id, imu_frame_id]
         )
 
     return launch.LaunchDescription([
@@ -65,6 +71,14 @@ def generate_launch_description():
             'ekf_param_dir',
             default_value=ekf_param_dir,
             description='Full path to ekf parameter file to load'),
+        launch.actions.DeclareLaunchArgument(
+            'robot_frame_id',
+            default_value=robot_frame_id,
+            description='Parent frame id for static TF publisher'),
+        launch.actions.DeclareLaunchArgument(
+            'imu_frame_id',
+            default_value=imu_frame_id,
+            description='Child frame id for static TF publisher'),
         ekf,
         tf,
             ])
