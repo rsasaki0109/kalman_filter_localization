@@ -93,6 +93,8 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("var_imu_acc", var_imu_acc_);
     node_.declare_parameter("max_imu_dt_sec", 0.5);
     node_.get_parameter("max_imu_dt_sec", max_imu_dt_sec_);
+    node_.declare_parameter("gravity_mps2", 9.80665);
+    node_.get_parameter("gravity_mps2", gravity_mps2_);
     node_.declare_parameter("var_gnss_xy", 0.1);
     node_.get_parameter("var_gnss_xy", var_gnss_xy_);
     node_.declare_parameter("var_gnss_z", 0.15);
@@ -111,6 +113,12 @@ struct EkfLocalizationComponent::Impl
         node_.get_logger(),
         "invalid parameter max_imu_dt_sec=%f. fallback to default=%f",
         max_imu_dt_sec_, ekf_.getMaxPredictionDtSec());
+    }
+    if (!ekf_.setGravityZ(gravity_mps2_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gravity_mps2=%f. fallback to default=%f",
+        gravity_mps2_, ekf_.getGravityZ());
     }
     var_gnss_ << var_gnss_xy_, var_gnss_xy_, var_gnss_z_;
     var_odom_ << var_odom_xyz_, var_odom_xyz_, var_odom_xyz_;
@@ -355,6 +363,7 @@ struct EkfLocalizationComponent::Impl
   double var_imu_w_{0.0};
   double var_imu_acc_{0.0};
   double max_imu_dt_sec_{0.0};
+  double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};
   double var_gnss_z_{0.0};
   Eigen::Vector3d var_gnss_{Eigen::Vector3d::Zero()};
