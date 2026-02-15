@@ -63,6 +63,8 @@ ekf_localization_node
    Compute ATE-like metrics (3D/XY RMSE, P95, bias) from estimated vs ground-truth CSV.
 3. `tools/run_open_data_sweep.py`  
    Run bag playback + EKF parameter grid search and output `summary.csv`.
+4. `tools/navsatfix_to_pose.py`  
+   Convert `/fix (NavSatFix)` to `/gnss_pose (PoseStamped)` for EKF input/evaluation.
 
 Example:
 
@@ -82,6 +84,30 @@ Outputs:
 - `/tmp/kfl_benchmark/summary.csv`: all runs + metrics
 - `/tmp/kfl_benchmark/ranking_by_rmse_3d.csv`: successful runs sorted by `rmse_3d_m`
 - `/tmp/kfl_benchmark/run_xxx/`: per-run logs, CSV, and metrics JSON
+
+For open data that has `/fix` (NavSatFix) instead of `/gnss_pose`, run converter first:
+
+```bash
+python3 src/kalman_filter_localization/tools/navsatfix_to_pose.py \
+  --input-topic /fix \
+  --output-topic /gnss_pose \
+  --output-frame-id map
+```
+
+Then run a quick sweep on selected topics:
+
+```bash
+python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
+  --bag-path /path/to/eagleye_sample_ros2_no_velodyne \
+  --param-grid-json src/kalman_filter_localization/tools/param_grid_quick.json \
+  --output-dir /tmp/kfl_benchmark_quick \
+  --imu-topic /imu/data_raw \
+  --gnss-topic /gnss_pose \
+  --ground-truth-topic /gnss_pose \
+  --play-topics /imu/data_raw /fix \
+  --play-rate 20.0 \
+  --max-runs 4
+```
 
 ## demo
 
