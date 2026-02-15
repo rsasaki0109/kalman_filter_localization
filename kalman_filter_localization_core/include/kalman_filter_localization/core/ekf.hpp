@@ -82,6 +82,7 @@ public:
     P_(EigenMatrix9d::Identity() * 100),
     var_imu_w_{0.33},
     var_imu_acc_{0.33},
+    max_prediction_dt_sec_{0.5},
     tau_gyro_bias_{1.0}
   {
     /* x  = [p v q] = [x y z vx vy vz qx qy qz qw] */
@@ -136,11 +137,10 @@ public:
     const Eigen::Vector3d & linear_acceleration
   )
   {
-    constexpr double kMaxDtSec = 0.5;
     if (dt_imu <= 0.0) {
       return PredictionUpdateStatus::kNonPositiveDt;
     }
-    if (dt_imu > kMaxDtSec) {
+    if (dt_imu > max_prediction_dt_sec_) {
       return PredictionUpdateStatus::kDtTooLarge;
     }
 
@@ -291,6 +291,20 @@ public:
     var_imu_acc_ = var_imu_acc;
   }
 
+  bool setMaxPredictionDtSec(const double max_prediction_dt_sec)
+  {
+    if (!(max_prediction_dt_sec > 0.0) || !std::isfinite(max_prediction_dt_sec)) {
+      return false;
+    }
+    max_prediction_dt_sec_ = max_prediction_dt_sec;
+    return true;
+  }
+
+  double getMaxPredictionDtSec() const
+  {
+    return max_prediction_dt_sec_;
+  }
+
   bool setInitialXChecked(const Eigen::Ref<const Eigen::VectorXd> & x)
   {
     if (x.size() != num_state_) {
@@ -384,6 +398,7 @@ private:
   bool has_previous_time_imu_;
   double var_imu_w_;
   double var_imu_acc_;
+  double max_prediction_dt_sec_;
 
   static const int num_state_{10};
   static const int num_error_state_{9};
