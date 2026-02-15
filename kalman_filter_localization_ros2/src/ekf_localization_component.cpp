@@ -55,6 +55,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <kalman_filter_localization/core/ekf.hpp>
+#include <kalman_filter_localization/core/odometry.hpp>
 
 namespace kalman_filter_localization
 {
@@ -205,8 +206,9 @@ struct EkfLocalizationComponent::Impl
 
         Eigen::Affine3d current_affine;
         tf2::fromMsg(current_pose_odom_.pose, current_affine);
-        Eigen::Matrix4d current_trans = current_affine.matrix();
-        current_trans = current_trans * previous_odom_mat_.inverse() * odom_mat;
+        const Eigen::Matrix4d current_global_mat = current_affine.matrix();
+        const Eigen::Matrix4d current_trans =
+          core::composePoseWithRelativeOdom(current_global_mat, previous_odom_mat_, odom_mat);
 
         geometry_msgs::msg::PoseStamped pose;
         pose.header = msg->header;

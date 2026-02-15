@@ -34,9 +34,11 @@ if(BUILD_TESTING)
 
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_ekf_core test/test_ekf_core.cpp)
+  ament_add_gtest(test_odometry_core test/test_odometry_core.cpp)
   # ament_add_gtest uses the plain target_link_libraries() signature internally,
   # so keep using the plain signature here too (CMake forbids mixing styles).
   target_link_libraries(test_ekf_core ${PROJECT_NAME})
+  target_link_libraries(test_odometry_core ${PROJECT_NAME})
 endif()
 
 ament_export_dependencies(eigen3_cmake_module)
@@ -45,4 +47,3 @@ ament_export_include_directories(include)
 ament_export_targets(export_${PROJECT_NAME})
 
 ament_package()
-
