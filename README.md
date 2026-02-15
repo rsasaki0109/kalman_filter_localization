@@ -109,6 +109,28 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --max-runs 4
 ```
 
+## Dataset Profiles
+
+Tuned profile files are available under `kalman_filter_localization_ros2/param/profiles/`.
+
+- `eagleye_sample_ros2_no_velodyne.yaml`
+  - Derived from open-data sweep on `eagleye_sample_ros2_no_velodyne`
+  - Key tuned values:
+    - `var_imu_w: 0.005`
+    - `var_imu_acc: 0.01`
+    - `max_imu_dt_sec: 0.5`
+    - `var_gnss_xy: 0.2`
+    - `var_gnss_z: 0.1`
+
+Example launch with this profile and IMU frame override:
+
+```bash
+ros2 launch kalman_filter_localization ekf.launch.py \
+  ekf_param_dir:=$(ros2 pkg prefix --share kalman_filter_localization)/param/profiles/eagleye_sample_ros2_no_velodyne.yaml \
+  robot_frame_id:=base_link \
+  imu_frame_id:=imu
+```
+
 ## demo
 
 [rosbag demo data(ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
