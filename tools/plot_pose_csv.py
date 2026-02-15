@@ -3,7 +3,7 @@
 
 This script generates:
 - XY trajectory plot with START/GOAL markers.
-- Time series plot for z + RPY, including reference yaw (from GT quaternion or course).
+- Time series plot for z + RPY, including reference yaw (from GT quaternion, attitude reference, or course).
 
 CSV format is compatible with tools/record_pose_csv.py:
   t_sec,x,y,z,qx,qy,qz,qw
@@ -225,6 +225,7 @@ def plot_xy_trajectory(
 def plot_timeseries_z_rpy(
     est: Sequence[PoseSample],
     gt: Sequence[PoseSample],
+    attitude_ref: Optional[Sequence[PoseSample]],
     out_path: Path,
     title: str,
     yaw_reference: str,
@@ -235,9 +236,16 @@ def plot_timeseries_z_rpy(
     if max_time_gap_sec <= 0.0:
         raise ValueError("--max-time-gap-sec must be > 0")
 
-    t0 = min(est[0].t_sec, gt[0].t_sec)
+    t0 = min(
+        est[0].t_sec,
+        gt[0].t_sec,
+        attitude_ref[0].t_sec if attitude_ref else float("inf"),
+    )
     est_t = [s.t_sec - t0 for s in est]
     gt_t = [s.t_sec - t0 for s in gt]
+    ref_t: List[float] = []
+    if attitude_ref:
+        ref_t = [s.t_sec - t0 for s in attitude_ref]
 
     est_z = [s.z for s in est]
     gt_z = [s.z for s in gt]
@@ -247,43 +255,106 @@ def plot_timeseries_z_rpy(
     est_p_d = [v * 180.0 / math.pi for v in est_p]
     est_yaw_d = [v * 180.0 / math.pi for v in est_yaw]
 
+    has_att_quat = bool(attitude_ref) and not gt_quat_is_identity(attitude_ref or [])
     has_gt_quat = not gt_quat_is_identity(gt)
-    gt_r_d: List[float] = []
-    gt_p_d: List[float] = []
-    gt_yaw_d: List[float] = []
-    if has_gt_quat:
-        gt_r, gt_p, gt_yaw = zip(*(quat_to_rpy(s.qx, s.qy, s.qz, s.qw) for s in gt))
-        gt_r_d = [v * 180.0 / math.pi for v in gt_r]
-        gt_p_d = [v * 180.0 / math.pi for v in gt_p]
-        gt_yaw_d = [v * 180.0 / math.pi for v in gt_yaw]
 
-    # Build reference yaw and yaw error on EST timestamps.
-    ref_yaw_deg: List[float] = []
+    # Reference for roll/pitch display (cannot be derived from course).
+    rpy_ref_quat: Optional[Sequence[PoseSample]] = None
+    rpy_ref_t: List[float] = []
+    rpy_ref_label = ""
+    if has_att_quat:
+        rpy_ref_quat = attitude_ref
+        rpy_ref_t = ref_t
+        rpy_ref_label = "REF(attitude_csv)"
+    elif has_gt_quat:
+        rpy_ref_quat = gt
+        rpy_ref_t = gt_t
+        rpy_ref_label = "GT"
+
+    rpy_ref_r_d: List[float] = []
+    rpy_ref_p_d: List[float] = []
+    rpy_ref_yaw_d: List[float] = []
+    if rpy_ref_quat is not None:
+        rpy_ref_r, rpy_ref_p, rpy_ref_yaw = zip(
+            *(quat_to_rpy(s.qx, s.qy, s.qz, s.qw) for s in rpy_ref_quat)
+        )
+        rpy_ref_r_d = [v * 180.0 / math.pi for v in rpy_ref_r]
+        rpy_ref_p_d = [v * 180.0 / math.pi for v in rpy_ref_p]
+        rpy_ref_yaw_d = [v * 180.0 / math.pi for v in rpy_ref_yaw]
+
+    # Build reference yaw and angle errors on EST timestamps.
+    course_yaw_deg: List[float] = []
+    err_roll_deg: List[float] = []
+    err_pitch_deg: List[float] = []
     err_yaw_deg: List[float] = []
     err_t: List[float] = []
 
+    # Resolve yaw reference.
+    if yaw_reference == "attitude_csv" and not has_att_quat:
+        yaw_reference = "gt_quat" if has_gt_quat else "gt_course"
     if yaw_reference == "gt_quat" and not has_gt_quat:
-        yaw_reference = "gt_course"
+        yaw_reference = "attitude_csv" if has_att_quat else "gt_course"
+
+    yaw_ref_quat: Optional[Sequence[PoseSample]] = None
+    yaw_ref_t: List[float] = []
+    yaw_ref_label = ""
+    yaw_ref_yaw_d: List[float] = []
+    if yaw_reference == "attitude_csv" and has_att_quat:
+        yaw_ref_quat = attitude_ref
+        yaw_ref_t = ref_t
+        yaw_ref_label = "REF(attitude_csv)"
+    elif yaw_reference == "gt_quat" and has_gt_quat:
+        yaw_ref_quat = gt
+        yaw_ref_t = gt_t
+        yaw_ref_label = "GT"
+    if yaw_ref_quat is not None:
+        _, _, yaw_ref_yaw = zip(*(quat_to_rpy(s.qx, s.qy, s.qz, s.qw) for s in yaw_ref_quat))
+        yaw_ref_yaw_d = [v * 180.0 / math.pi for v in yaw_ref_yaw]
 
     gt_times = [s.t_sec for s in gt]
-    for s, t_rel, yaw_est in zip(est, est_t, est_yaw):
-        seg = match_segment_at_time(gt, gt_times, s.t_sec)
-        if seg is None:
-            continue
-        left, right, gap_left, gap_right = seg
-        if min(gap_left, gap_right) > max_time_gap_sec:
-            continue
+    yaw_ref_times: List[float] = []
+    if yaw_ref_quat is not None:
+        yaw_ref_times = [s.t_sec for s in yaw_ref_quat]
 
-        if yaw_reference == "gt_quat" and has_gt_quat:
-            _, _, yaw_ref = quat_to_rpy(left.qx, left.qy, left.qz, left.qw)
+    for s, t_rel, yaw_est in zip(est, est_t, est_yaw):
+        yaw_ref: Optional[float] = None
+
+        if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
+            seg = match_segment_at_time(yaw_ref_quat, yaw_ref_times, s.t_sec)
+            if seg is None:
+                continue
+            left, right, gap_left, gap_right = seg
+            if min(gap_left, gap_right) > max_time_gap_sec:
+                continue
+            ref_sample = left if gap_left <= gap_right else right
+            roll_ref, pitch_ref, yaw_ref_tmp = quat_to_rpy(
+                ref_sample.qx, ref_sample.qy, ref_sample.qz, ref_sample.qw
+            )
+            roll_est, pitch_est, _ = quat_to_rpy(s.qx, s.qy, s.qz, s.qw)
+            if not all(math.isfinite(v) for v in (roll_ref, pitch_ref, yaw_ref_tmp, roll_est, pitch_est)):
+                continue
+
+            err_roll_deg.append(wrap_to_pi(roll_est - roll_ref) * 180.0 / math.pi)
+            err_pitch_deg.append(wrap_to_pi(pitch_est - pitch_ref) * 180.0 / math.pi)
+            yaw_ref = yaw_ref_tmp
+
         else:
+            seg = match_segment_at_time(gt, gt_times, s.t_sec)
+            if seg is None:
+                continue
+            left, right, gap_left, gap_right = seg
+            if min(gap_left, gap_right) > max_time_gap_sec:
+                continue
             dx = right.x - left.x
             dy = right.y - left.y
             if abs(dx) < 1e-12 and abs(dy) < 1e-12:
                 continue
             yaw_ref = math.atan2(dy, dx)
+            course_yaw_deg.append(yaw_ref * 180.0 / math.pi)
 
-        ref_yaw_deg.append(yaw_ref * 180.0 / math.pi)
+        if yaw_ref is None or not math.isfinite(yaw_ref):
+            continue
+
         err_yaw_deg.append(wrap_to_pi(yaw_est - yaw_ref) * 180.0 / math.pi)
         err_t.append(t_rel)
 
@@ -295,31 +366,55 @@ def plot_timeseries_z_rpy(
     axes[0].grid(True, linestyle="--", alpha=0.35)
     axes[0].legend(loc="best")
 
-    if has_gt_quat:
-        axes[1].plot(gt_t, gt_r_d, color="#1f77b4", linewidth=1.2, label="GT roll")
+    if rpy_ref_quat is not None:
+        axes[1].plot(
+            rpy_ref_t,
+            rpy_ref_r_d,
+            color="#1f77b4",
+            linewidth=1.2,
+            label=f"{rpy_ref_label} roll",
+        )
     axes[1].plot(est_t, est_r_d, color="#d62728", linewidth=1.0, label="EST roll")
     axes[1].set_ylabel("roll [deg]")
     axes[1].grid(True, linestyle="--", alpha=0.35)
     axes[1].legend(loc="best")
 
-    if has_gt_quat:
-        axes[2].plot(gt_t, gt_p_d, color="#1f77b4", linewidth=1.2, label="GT pitch")
+    if rpy_ref_quat is not None:
+        axes[2].plot(
+            rpy_ref_t,
+            rpy_ref_p_d,
+            color="#1f77b4",
+            linewidth=1.2,
+            label=f"{rpy_ref_label} pitch",
+        )
     axes[2].plot(est_t, est_p_d, color="#d62728", linewidth=1.0, label="EST pitch")
     axes[2].set_ylabel("pitch [deg]")
     axes[2].grid(True, linestyle="--", alpha=0.35)
     axes[2].legend(loc="best")
 
     axes[3].plot(est_t, est_yaw_d, color="#d62728", linewidth=1.0, label="EST yaw")
-    if yaw_reference == "gt_quat" and has_gt_quat:
-        axes[3].plot(gt_t, gt_yaw_d, color="#1f77b4", linewidth=1.2, label="GT yaw")
+    if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
+        axes[3].plot(
+            yaw_ref_t,
+            yaw_ref_yaw_d,
+            color="#1f77b4",
+            linewidth=1.2,
+            label=f"{yaw_ref_label} yaw",
+        )
     else:
-        axes[3].plot(err_t, ref_yaw_deg, color="#1f77b4", linewidth=1.2, label="REF yaw (course)")
+        axes[3].plot(err_t, course_yaw_deg, color="#1f77b4", linewidth=1.2, label="REF yaw (course)")
     axes[3].set_ylabel("yaw [deg]")
     axes[3].grid(True, linestyle="--", alpha=0.35)
     axes[3].legend(loc="best")
 
-    axes[4].plot(err_t, err_yaw_deg, color="black", linewidth=1.0, label="yaw error (EST-REF)")
-    axes[4].set_ylabel("yaw err [deg]")
+    if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
+        axes[4].plot(err_t, err_roll_deg, color="#2ca02c", linewidth=1.0, label="roll error (EST-REF)")
+        axes[4].plot(err_t, err_pitch_deg, color="#ff7f0e", linewidth=1.0, label="pitch error (EST-REF)")
+        axes[4].plot(err_t, err_yaw_deg, color="black", linewidth=1.0, label="yaw error (EST-REF)")
+        axes[4].set_ylabel("angle err [deg]")
+    else:
+        axes[4].plot(err_t, err_yaw_deg, color="black", linewidth=1.0, label="yaw error (EST-REF)")
+        axes[4].set_ylabel("yaw err [deg]")
     axes[4].set_xlabel("t [sec] (offset)")
     axes[4].grid(True, linestyle="--", alpha=0.35)
     axes[4].legend(loc="best")
@@ -335,6 +430,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--estimated-csv", required=True, type=Path)
     p.add_argument("--ground-truth-csv", required=True, type=Path)
+    p.add_argument(
+        "--attitude-reference-csv",
+        type=Path,
+        default=None,
+        help="optional attitude reference (Pose CSV with quaternion, e.g. recorded from sensor_msgs/Imu)",
+    )
     p.add_argument("--output-dir", type=Path, default=Path("."))
     p.add_argument("--prefix", default="plot")
     p.add_argument("--min-time-sec", type=float, default=0.0, help="drop samples with t_sec < this")
@@ -346,9 +447,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-time-gap-sec", type=float, default=0.1, help="time gate for yaw reference/error")
     p.add_argument(
         "--yaw-reference",
-        choices=["auto", "gt_quat", "gt_course"],
+        choices=["auto", "gt_quat", "gt_course", "attitude_csv"],
         default="auto",
-        help="reference yaw source. auto prefers gt_quat if available, otherwise gt_course",
+        help="reference yaw source. auto prefers attitude_csv, then gt_quat, otherwise gt_course",
     )
     return p
 
@@ -357,12 +458,22 @@ def main() -> int:
     args = build_parser().parse_args()
     est = read_pose_csv(args.estimated_csv, min_time_sec=args.min_time_sec)
     gt = read_pose_csv(args.ground_truth_csv, min_time_sec=args.min_time_sec)
+    attitude_ref: Optional[List[PoseSample]] = None
+    if args.attitude_reference_csv is not None:
+        attitude_ref = read_pose_csv(args.attitude_reference_csv, min_time_sec=args.min_time_sec)
     est = filter_pose_samples(est, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12)
     gt = filter_pose_samples(gt, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12)
+    if attitude_ref is not None:
+        attitude_ref = filter_pose_samples(
+            attitude_ref, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12
+        )
 
     yaw_reference = args.yaw_reference
     if yaw_reference == "auto":
-        yaw_reference = "gt_course" if gt_quat_is_identity(gt) else "gt_quat"
+        if attitude_ref is not None and not gt_quat_is_identity(attitude_ref):
+            yaw_reference = "attitude_csv"
+        else:
+            yaw_reference = "gt_course" if gt_quat_is_identity(gt) else "gt_quat"
 
     xy_path = args.output_dir / f"{args.prefix}_trajectory_xy.png"
     ts_path = args.output_dir / f"{args.prefix}_timeseries_z_rpy.png"
@@ -376,6 +487,7 @@ def main() -> int:
     plot_timeseries_z_rpy(
         est=est,
         gt=gt,
+        attitude_ref=attitude_ref,
         out_path=ts_path,
         title=f"Time Series z+RPY ({args.prefix})",
         yaw_reference=yaw_reference,
