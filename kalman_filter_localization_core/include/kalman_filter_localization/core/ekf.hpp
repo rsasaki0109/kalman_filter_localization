@@ -305,6 +305,20 @@ public:
     return max_prediction_dt_sec_;
   }
 
+  bool setGravityZ(const double gravity_z_mps2)
+  {
+    if (!std::isfinite(gravity_z_mps2)) {
+      return false;
+    }
+    gravity_ = Eigen::Vector3d(0.0, 0.0, gravity_z_mps2);
+    return true;
+  }
+
+  double getGravityZ() const
+  {
+    return gravity_.z();
+  }
+
   bool setInitialXChecked(const Eigen::Ref<const Eigen::VectorXd> & x)
   {
     if (x.size() != num_state_) {
@@ -408,7 +422,7 @@ private:
   Eigen::Matrix<double, num_state_, 1> x_;
   EigenMatrix9d P_;
 
-  const Eigen::Vector3d gravity_{0, 0, 9.80665};
+  Eigen::Vector3d gravity_{0.0, 0.0, 9.80665};
 
   double tau_gyro_bias_;
 
