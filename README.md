@@ -53,6 +53,36 @@ ekf_localization_node
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
 
+## Open-Data Benchmark
+
+`tools/` contains scripts to evaluate and tune on open datasets.
+
+1. `tools/record_pose_csv.py`  
+   Record `PoseStamped` or `Odometry` topic to CSV.
+2. `tools/evaluate_trajectory.py`  
+   Compute ATE-like metrics (3D/XY RMSE, P95, bias) from estimated vs ground-truth CSV.
+3. `tools/run_open_data_sweep.py`  
+   Run bag playback + EKF parameter grid search and output `summary.csv`.
+
+Example:
+
+```bash
+cd /path/to/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
+  --bag-path /path/to/open_data_bag \
+  --ground-truth-topic /gnss_pose \
+  --param-grid-json src/kalman_filter_localization/tools/param_grid_example.json \
+  --output-dir /tmp/kfl_benchmark
+```
+
+Outputs:
+- `/tmp/kfl_benchmark/summary.csv`: all runs + metrics
+- `/tmp/kfl_benchmark/ranking_by_rmse_3d.csv`: successful runs sorted by `rmse_3d_m`
+- `/tmp/kfl_benchmark/run_xxx/`: per-run logs, CSV, and metrics JSON
+
 ## demo
 
 [rosbag demo data(ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
