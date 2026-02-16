@@ -191,6 +191,8 @@ ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_ista
   --max-runs 1
 ```
 
+The suite also generates an HTML report under the output directory (e.g., `istanbul_suite_report_YYYYMMDD_HHMMSS.html`) embedding the copied `best_plots/` images.
+
 Plot the resulting CSV for a run:
 
 ```bash
