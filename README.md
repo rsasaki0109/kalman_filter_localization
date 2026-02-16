@@ -68,7 +68,9 @@ ekf_localization_node
    Convenience wrapper to run the sweep across multiple Autoware Istanbul all-sensors bags and collect best plots/metrics.
 5. `tools/navsatfix_to_pose.py`  
    Convert `/fix (NavSatFix)` to `/gnss_pose (PoseStamped)` for EKF input/evaluation.
-6. `tools/plot_pose_csv.py`  
+6. `tools/applanix_nav_solution_to_pose.py`  
+   Convert Applanix `/lvx_client/gsof/ins_solution_49 (NavigationSolutionGsof49)` to `/ins_pose (PoseStamped)` for evaluation (requires `applanix_msgs`).
+7. `tools/plot_pose_csv.py`  
    Plot XY trajectory (START/GOAL markers) and z+RPY time series. Yaw reference uses attitude reference CSV (if provided), otherwise GT quaternion (if available), otherwise course from GT positions.
 
 Example:
@@ -100,6 +102,41 @@ python3 src/kalman_filter_localization/tools/navsatfix_to_pose.py \
 ```
 
 For Autoware Istanbul all-sensors bags, `tools/param_grid_istanbul_quick.json` is a good starting point (it fixes `gravity_mps2: 0.0`).
+
+If you want a stronger reference than GNSS fixes, Istanbul bags also include Applanix INS outputs:
+- `/lvx_client/gsof/ins_solution_49 (applanix_msgs/msg/NavigationSolutionGsof49)`
+
+To use it as ground truth, first make `applanix_msgs` available in your environment (example):
+
+```bash
+git clone https://github.com/autowarefoundation/applanix.git src/applanix
+colcon build --symlink-install --packages-select applanix_msgs
+source install/setup.bash
+```
+
+Then run the sweep with `--enable-applanix-to-pose` and set `--ground-truth-topic /ins_pose`:
+
+```bash
+ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
+  --bag-path data/istanbul/all-sensors-bag1_compressed \
+  --param-grid-json src/kalman_filter_localization/tools/param_grid_istanbul_quick.json \
+  --output-dir /tmp/kfl_istanbul_bag1_ins_gt \
+  --imu-topic /sensing/imu/imu_data \
+  --gnss-topic /gnss_pose \
+  --ground-truth-topic /ins_pose \
+  --play-topics /sensing/imu/imu_data /gnss/fix /lvx_client/gsof/ins_solution_49 \
+  --enable-navsatfix-to-pose \
+  --navsatfix-input-topic /gnss/fix \
+  --navsatfix-output-topic /gnss_pose \
+  --enable-applanix-to-pose \
+  --applanix-input-topic /lvx_client/gsof/ins_solution_49 \
+  --applanix-output-topic /ins_pose \
+  --attitude-reference-topic /sensing/imu/imu_data \
+  --attitude-reference-msg-type imu \
+  --plot-best \
+  --play-rate 20.0 \
+  --max-runs 4
+```
 
 Then run a quick sweep on selected topics:
 
