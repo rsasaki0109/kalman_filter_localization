@@ -91,6 +91,7 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
 Outputs:
 - `/tmp/kfl_benchmark/summary.csv`: all runs + metrics
 - `/tmp/kfl_benchmark/ranking_by_rmse_3d.csv`: successful runs sorted by `rmse_3d_m`
+- `/tmp/kfl_benchmark/ranking_by_rmse_3d_nobias.csv`: successful runs sorted by `rmse_3d_nobias_m` (RMSE after subtracting mean XYZ bias)
 - `/tmp/kfl_benchmark/run_xxx/`: per-run logs, CSV, and metrics JSON
 
 For open data that has `/fix` (NavSatFix) instead of `/gnss_pose`, either run the converter first or let the sweep start it automatically with `--enable-navsatfix-to-pose`.

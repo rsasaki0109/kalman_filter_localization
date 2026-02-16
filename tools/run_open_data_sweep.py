@@ -274,6 +274,7 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = args.output_dir / "summary.csv"
     ranking_path = args.output_dir / "ranking_by_rmse_3d.csv"
+    ranking_nobias_path = args.output_dir / "ranking_by_rmse_3d_nobias.csv"
 
     print(f"bag_path: {args.bag_path}")
     print(f"param_grid_json: {args.param_grid_json}")
@@ -519,6 +520,8 @@ def main() -> int:
             "matched_samples": "",
             "rmse_3d_m": "",
             "rmse_xy_m": "",
+            "rmse_3d_nobias_m": "",
+            "rmse_xy_nobias_m": "",
             "mean_3d_m": "",
             "median_3d_m": "",
             "p95_3d_m": "",
@@ -582,6 +585,8 @@ def main() -> int:
             "matched_samples",
             "rmse_3d_m",
             "rmse_xy_m",
+            "rmse_3d_nobias_m",
+            "rmse_xy_nobias_m",
             "mean_3d_m",
             "median_3d_m",
             "p95_3d_m",
@@ -608,6 +613,8 @@ def main() -> int:
             "matched_samples",
             "rmse_3d_m",
             "rmse_xy_m",
+            "rmse_3d_nobias_m",
+            "rmse_xy_nobias_m",
             "mean_3d_m",
             "median_3d_m",
             "p95_3d_m",
@@ -617,6 +624,17 @@ def main() -> int:
             "bias_z_m",
         ]
         write_summary_csv(ranking_path, successful_sorted, fieldnames)
+
+        successful_nobias = [
+            r
+            for r in rows
+            if r["status"] == "ok"
+            and isinstance(r.get("rmse_3d_nobias_m"), (int, float))
+        ]
+        successful_nobias_sorted = sorted(successful_nobias, key=lambda r: float(r["rmse_3d_nobias_m"]))
+        if successful_nobias_sorted:
+            write_summary_csv(ranking_nobias_path, successful_nobias_sorted, fieldnames)
+
         best = successful_sorted[0]
         print("\nBest run")
         print(f"  run_id: {best['run_id']}")
@@ -674,6 +692,8 @@ def main() -> int:
     print(f"summary_csv: {summary_path}")
     if ranking_path.exists():
         print(f"ranking_csv: {ranking_path}")
+    if ranking_nobias_path.exists():
+        print(f"ranking_nobias_csv: {ranking_nobias_path}")
     return 0
 
 
