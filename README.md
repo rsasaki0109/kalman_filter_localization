@@ -87,7 +87,7 @@ Outputs:
 - `/tmp/kfl_benchmark/ranking_by_rmse_3d.csv`: successful runs sorted by `rmse_3d_m`
 - `/tmp/kfl_benchmark/run_xxx/`: per-run logs, CSV, and metrics JSON
 
-For open data that has `/fix` (NavSatFix) instead of `/gnss_pose`, run converter first:
+For open data that has `/fix` (NavSatFix) instead of `/gnss_pose`, either run the converter first or let the sweep start it automatically with `--enable-navsatfix-to-pose`.
 
 ```bash
 python3 src/kalman_filter_localization/tools/navsatfix_to_pose.py \
@@ -107,6 +107,9 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --gnss-topic /gnss_pose \
   --ground-truth-topic /gnss_pose \
   --play-topics /imu/data_raw /fix \
+  --enable-navsatfix-to-pose \
+  --navsatfix-input-topic /fix \
+  --navsatfix-output-topic /gnss_pose \
   --play-rate 20.0 \
   --max-runs 4
 ```
