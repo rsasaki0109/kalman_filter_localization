@@ -204,6 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--applanix-output-topic", default="/ins_pose")
     p.add_argument("--applanix-qos-depth", type=int, default=10)
     p.add_argument(
+        "--applanix-orientation-mode",
+        choices=["identity", "raw_rpy", "ros"],
+        default="ros",
+        help="forwarded to tools/applanix_nav_solution_to_pose.py --orientation-mode",
+    )
+    p.add_argument(
         "--applanix-origin-navsatfix-topic",
         default=None,
         help=(
@@ -352,6 +358,8 @@ def main() -> int:
                     args.reference_frame_id,
                     "--qos-depth",
                     str(args.applanix_qos_depth),
+                    "--orientation-mode",
+                    str(args.applanix_orientation_mode),
                 ]
                 if args.applanix_origin_navsatfix_topic:
                     apx_cmd += [
