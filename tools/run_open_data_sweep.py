@@ -20,6 +20,7 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 SCRIPT_DIR = Path(__file__).resolve().parent
 RECORD_SCRIPT = SCRIPT_DIR / "record_pose_csv.py"
 EVAL_SCRIPT = SCRIPT_DIR / "evaluate_trajectory.py"
+NAVSATFIX_SCRIPT = SCRIPT_DIR / "navsatfix_to_pose.py"
 
 
 @dataclass
@@ -150,6 +151,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="x,y,z,qx,qy,qz,qw,frame_id,child_frame_id",
     )
 
+    p.add_argument(
+        "--enable-navsatfix-to-pose",
+        action="store_true",
+        default=False,
+        help="start tools/navsatfix_to_pose.py during each run (to convert NavSatFix -> PoseStamped)",
+    )
+    p.add_argument("--navsatfix-input-topic", default="/fix")
+    p.add_argument("--navsatfix-output-topic", default="/gnss_pose")
+    p.add_argument("--navsatfix-qos-depth", type=int, default=10)
+
     p.add_argument("--play-rate", type=float, default=1.0)
     p.add_argument(
         "--play-topics",
@@ -177,6 +188,9 @@ def main() -> int:
         return 2
     if not RECORD_SCRIPT.exists() or not EVAL_SCRIPT.exists():
         print("ERROR: helper scripts are missing in tools/", file=sys.stderr)
+        return 2
+    if args.enable_navsatfix_to_pose and not NAVSATFIX_SCRIPT.exists():
+        print("ERROR: tools/navsatfix_to_pose.py is missing", file=sys.stderr)
         return 2
     if args.play_rate <= 0.0:
         print("ERROR: --play-rate must be > 0", file=sys.stderr)
@@ -239,6 +253,25 @@ def main() -> int:
             if args.enable_static_tf:
                 tf_cmd = ["ros2", "run", "tf2_ros", "static_transform_publisher"] + static_tf_args
                 processes.append(start_background_process("static_tf", tf_cmd, run_dir / "static_tf.log"))
+
+            if args.enable_navsatfix_to_pose:
+                conv_cmd = [
+                    sys.executable,
+                    str(NAVSATFIX_SCRIPT),
+                    "--input-topic",
+                    args.navsatfix_input_topic,
+                    "--output-topic",
+                    args.navsatfix_output_topic,
+                    "--output-frame-id",
+                    args.reference_frame_id,
+                    "--qos-depth",
+                    str(args.navsatfix_qos_depth),
+                ]
+                processes.append(
+                    start_background_process(
+                        "navsatfix_to_pose", conv_cmd, run_dir / "navsatfix_to_pose.log"
+                    )
+                )
 
             ekf_cmd: List[str] = [
                 "ros2",
