@@ -91,6 +91,12 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("var_imu_w", var_imu_w_);
     node_.declare_parameter("var_imu_acc", 0.01);
     node_.get_parameter("var_imu_acc", var_imu_acc_);
+    node_.declare_parameter("use_imu_orientation", false);
+    node_.get_parameter("use_imu_orientation", use_imu_orientation_);
+    node_.declare_parameter("use_imu_orientation_covariance", true);
+    node_.get_parameter("use_imu_orientation_covariance", use_imu_orientation_covariance_);
+    node_.declare_parameter("var_imu_orientation_rpy", 0.01);
+    node_.get_parameter("var_imu_orientation_rpy", var_imu_orientation_rpy_);
     node_.declare_parameter("max_imu_dt_sec", 0.5);
     node_.get_parameter("max_imu_dt_sec", max_imu_dt_sec_);
     node_.declare_parameter("gravity_mps2", 9.80665);
@@ -201,12 +207,32 @@ struct EkfLocalizationComponent::Impl
           tf2::doTransform(acc_in, acc_out, transform);
           tf2::doTransform(w_in, w_out, transform);
           transformed_msg.header.stamp = msg->header.stamp;
+          transformed_msg.header.frame_id = robot_frame_id_;
           transformed_msg.angular_velocity.x = w_out.vector.x;
           transformed_msg.angular_velocity.y = w_out.vector.y;
           transformed_msg.angular_velocity.z = w_out.vector.z;
           transformed_msg.linear_acceleration.x = acc_out.vector.x;
           transformed_msg.linear_acceleration.y = acc_out.vector.y;
           transformed_msg.linear_acceleration.z = acc_out.vector.z;
+          if (use_imu_orientation_) {
+            // Transform orientation from msg frame to robot_frame_id_.
+            // Assumes Imu::orientation represents the orientation of the sensor/body frame in the
+            // world frame (world <- body).
+            const Eigen::Quaterniond q_world_src(
+              msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z);
+            const Eigen::Quaterniond q_robot_src(
+              transform.transform.rotation.w,
+              transform.transform.rotation.x,
+              transform.transform.rotation.y,
+              transform.transform.rotation.z);
+            const Eigen::Quaterniond q_world_robot =
+              (q_world_src * q_robot_src.conjugate()).normalized();
+            transformed_msg.orientation.x = q_world_robot.x();
+            transformed_msg.orientation.y = q_world_robot.y();
+            transformed_msg.orientation.z = q_world_robot.z();
+            transformed_msg.orientation.w = q_world_robot.w();
+            transformed_msg.orientation_covariance = msg->orientation_covariance;
+          }
           predictUpdate(transformed_msg);
         } catch (tf2::TransformException & e) {
           RCLCPP_ERROR(node_.get_logger(), "%s", e.what());
@@ -321,6 +347,37 @@ struct EkfLocalizationComponent::Impl
         "skip EKF prediction update due to too large IMU dt: %f [sec]", dt_imu);
       return;
     }
+
+    if (use_imu_orientation_) {
+      const Eigen::Quaterniond q_meas(
+        imu_msg.orientation.w,
+        imu_msg.orientation.x,
+        imu_msg.orientation.y,
+        imu_msg.orientation.z);
+
+      Eigen::Vector3d var_rpy_rad2(
+        var_imu_orientation_rpy_, var_imu_orientation_rpy_, var_imu_orientation_rpy_);
+      if (use_imu_orientation_covariance_ && imu_msg.orientation_covariance[0] >= 0.0) {
+        const Eigen::Vector3d from_msg(
+          imu_msg.orientation_covariance[0],
+          imu_msg.orientation_covariance[4],
+          imu_msg.orientation_covariance[8]);
+        if (from_msg.allFinite() && (from_msg.array() > 0.0).all()) {
+          var_rpy_rad2 = from_msg;
+        }
+      }
+
+      const auto obs_status = ekf_.observationUpdateOrientationWithStatus(q_meas, var_rpy_rad2);
+      if (obs_status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+        RCLCPP_WARN_THROTTLE(
+          node_.get_logger(), clock_, 5000,
+          "skip EKF orientation update due to invalid quaternion measurement");
+      } else if (obs_status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+        RCLCPP_WARN_THROTTLE(
+          node_.get_logger(), clock_, 5000,
+          "skip EKF orientation update due to invalid orientation variance");
+      }
+    }
   }
 
   void measurementUpdate(
@@ -388,6 +445,9 @@ struct EkfLocalizationComponent::Impl
 
   double var_imu_w_{0.0};
   double var_imu_acc_{0.0};
+  bool use_imu_orientation_{false};
+  bool use_imu_orientation_covariance_{true};
+  double var_imu_orientation_rpy_{0.0};
   double max_imu_dt_sec_{0.0};
   double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};

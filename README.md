@@ -51,6 +51,9 @@ ekf_localization_node
 |var_odom_xyz|double|0.2|variance of an odometry[m^2]|
 |var_imu_w|double|0.01|variance of an angular velocity sensor[(rad/sec)^2]|
 |var_imu_acc|double|0.01|variance of an accelerometer[(m/sec^2)^2]|
+|use_imu_orientation|bool|false|whether to fuse `Imu.orientation` as an attitude observation (stabilizes roll/pitch/yaw)|
+|use_imu_orientation_covariance|bool|true|if true and `Imu.orientation_covariance` is valid, use it for the observation noise|
+|var_imu_orientation_rpy|double|0.01|fallback variance for IMU orientation observation [rad^2] (used when covariance is invalid)|
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
 |output_stamp_source|string|latest_input|timestamp source for `current_pose.header.stamp` (`latest_input`, `imu`, `ros_time`)|
@@ -244,6 +247,7 @@ Tuned profile files are available under `kalman_filter_localization_ros2/param/p
   - Profile for Autoware Istanbul all-sensors bags
   - Key values:
     - `gravity_mps2: 0.0` (IMU acceleration appears gravity-compensated)
+    - `use_imu_orientation: true` (fuse IMU orientation to stabilize roll/pitch/yaw)
 
 Example launch with this profile and IMU frame override:
 
