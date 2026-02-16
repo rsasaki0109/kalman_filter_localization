@@ -125,8 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", required=True, type=Path)
 
     p.add_argument("--estimated-topic", default="/ekf_localization/current_pose")
+    p.add_argument("--estimated-qos-depth", type=int, default=10)
     p.add_argument("--ground-truth-topic", default="/gnss_pose")
     p.add_argument("--ground-truth-msg-type", choices=["pose_stamped", "odometry"], default="pose_stamped")
+    p.add_argument("--ground-truth-qos-depth", type=int, default=10)
     p.add_argument(
         "--attitude-reference-topic",
         default=None,
@@ -313,6 +315,8 @@ def main() -> int:
                 "pose_stamped",
                 "--output",
                 str(est_csv),
+                "--qos-depth",
+                str(args.estimated_qos_depth),
             ]
             processes.append(
                 start_background_process("record_est", rec_est_cmd, run_dir / "record_est.log")
@@ -327,6 +331,8 @@ def main() -> int:
                 args.ground_truth_msg_type,
                 "--output",
                 str(gt_csv),
+                "--qos-depth",
+                str(args.ground_truth_qos_depth),
             ]
             processes.append(
                 start_background_process("record_gt", rec_gt_cmd, run_dir / "record_gt.log")
