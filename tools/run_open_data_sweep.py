@@ -230,7 +230,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--plot-best",
         action="store_true",
         default=False,
-        help="generate plots for the best run (requires tools/plot_pose_csv.py + matplotlib)",
+        help=(
+            "generate plots for the best run(s) (requires tools/plot_pose_csv.py + matplotlib). "
+            "When available, plots both: best by rmse_3d_m and best by rmse_3d_nobias_m."
+        ),
     )
     return p
 
@@ -636,6 +639,7 @@ def main() -> int:
             write_summary_csv(ranking_nobias_path, successful_nobias_sorted, fieldnames)
 
         best = successful_sorted[0]
+        best_nobias = successful_nobias_sorted[0] if successful_nobias_sorted else None
         print("\nBest run")
         print(f"  run_id: {best['run_id']}")
         print(f"  rmse_3d_m: {float(best['rmse_3d_m']):.6f}")
@@ -643,49 +647,60 @@ def main() -> int:
         print(f"  params: {best_params}")
 
         if args.plot_best and PLOT_SCRIPT.exists():
-            best_dir = args.output_dir / str(best["run_id"])
-            plot_time_normalize = "auto"
-            plot_time_align = "auto"
-            try:
-                payload = json.loads((best_dir / "metrics.json").read_text(encoding="utf-8"))
-                plot_time_normalize = payload.get("time_normalize", plot_time_normalize)
-                plot_time_align = payload.get("time_align", plot_time_align)
-            except Exception:  # pylint: disable=broad-except
-                pass
-            plot_cmd = [
-                sys.executable,
-                str(PLOT_SCRIPT),
-                "--estimated-csv",
-                str(best_dir / "estimated.csv"),
-                "--ground-truth-csv",
-                str(best_dir / "ground_truth.csv"),
-                "--output-dir",
-                str(best_dir),
-                "--prefix",
-                str(best["run_id"]),
-                "--time-normalize",
-                str(plot_time_normalize),
-                "--time-align",
-                str(plot_time_align),
-                "--max-time-gap-sec",
-                f"{args.eval_max_time_gap_sec:.12g}",
-            ]
-            if (best_dir / "attitude_reference.csv").exists():
-                plot_cmd.extend(
-                    ["--attitude-reference-csv", str(best_dir / "attitude_reference.csv")]
+            def run_plot(row: Dict[str, object], label: str) -> None:
+                run_id = str(row.get("run_id", ""))
+                if not run_id:
+                    return
+                run_dir = args.output_dir / run_id
+                plot_time_normalize = "auto"
+                plot_time_align = "auto"
+                try:
+                    payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+                    plot_time_normalize = payload.get("time_normalize", plot_time_normalize)
+                    plot_time_align = payload.get("time_align", plot_time_align)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                plot_cmd = [
+                    sys.executable,
+                    str(PLOT_SCRIPT),
+                    "--estimated-csv",
+                    str(run_dir / "estimated.csv"),
+                    "--ground-truth-csv",
+                    str(run_dir / "ground_truth.csv"),
+                    "--output-dir",
+                    str(run_dir),
+                    "--prefix",
+                    run_id,
+                    "--time-normalize",
+                    str(plot_time_normalize),
+                    "--time-align",
+                    str(plot_time_align),
+                    "--max-time-gap-sec",
+                    f"{args.eval_max_time_gap_sec:.12g}",
+                ]
+                if (run_dir / "attitude_reference.csv").exists():
+                    plot_cmd.extend(["--attitude-reference-csv", str(run_dir / "attitude_reference.csv")])
+
+                plot_result = subprocess.run(
+                    plot_cmd,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
                 )
-            plot_result = subprocess.run(
-                plot_cmd,
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            (best_dir / "plot_pose_csv.log").write_text(plot_result.stdout, encoding="utf-8")
-            if plot_result.returncode == 0:
-                print(f"best_run_plots: {best_dir}")
-            else:
-                print(f"  warning: plot_pose_csv failed (code={plot_result.returncode})")
+                (run_dir / "plot_pose_csv.log").write_text(plot_result.stdout, encoding="utf-8")
+                if plot_result.returncode == 0:
+                    print(f"{label}_plots: {run_dir}")
+                else:
+                    print(
+                        f"  warning: plot_pose_csv failed for {label} (code={plot_result.returncode})"
+                    )
+
+            plotted_run_ids = set()
+            run_plot(best, "best_run")
+            plotted_run_ids.add(str(best.get("run_id", "")))
+            if best_nobias is not None and str(best_nobias.get("run_id", "")) not in plotted_run_ids:
+                run_plot(best_nobias, "best_nobias_run")
     else:
         print("\nNo successful evaluations.")
 
