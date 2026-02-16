@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import html
 import shutil
 import subprocess
 import sys
@@ -116,6 +117,131 @@ def build_parser() -> argparse.ArgumentParser:
         help="do not record IMU attitude reference CSV (plots will use GT quaternion if available)",
     )
     return p
+
+
+def write_html_report(
+    *,
+    suite_out: Path,
+    stamp: str,
+    summary_csv: Path,
+    summary_rows: List[Dict[str, str]],
+) -> Path:
+    report_path = suite_out / f"istanbul_suite_report_{stamp}.html"
+
+    def img_tag(rel_src: str, alt: str) -> str:
+        src = html.escape(rel_src)
+        alt_esc = html.escape(alt)
+        return f'<img src="{src}" alt="{alt_esc}" loading="lazy" />'
+
+    best_plots = suite_out / "best_plots"
+    cards: List[str] = []
+    for r in summary_rows:
+        bag = r.get("bag", "")
+        if not bag:
+            continue
+        bag_esc = html.escape(bag)
+
+        def rel(p: Path) -> str:
+            try:
+                return str(p.relative_to(suite_out))
+            except Exception:  # pylint: disable=broad-except
+                return str(p)
+
+        out_dir = Path(r.get("output_dir", ""))
+        out_dir_rel = html.escape(rel(out_dir)) if out_dir.as_posix() else ""
+
+        # Images are copied by copy_best_plots() if present.
+        raw_xy = best_plots / f"{bag}_trajectory_xy.png"
+        raw_ts = best_plots / f"{bag}_timeseries_z_rpy.png"
+        nb_xy = best_plots / f"{bag}_nobias_trajectory_xy.png"
+        nb_ts = best_plots / f"{bag}_nobias_timeseries_z_rpy.png"
+
+        def maybe_img(p: Path, alt: str) -> str:
+            return img_tag(rel(p), alt) if p.exists() else "<div class=\"missing\">(missing)</div>"
+
+        cards.append(
+            "\n".join(
+                [
+                    "<section class=\"bag\">",
+                    f"<h2>{bag_esc}</h2>",
+                    f"<div class=\"meta\"><div><b>output_dir</b>: <code>{out_dir_rel}</code></div></div>",
+                    "<div class=\"grid\">",
+                    "<div class=\"panel\">",
+                    "<h3>Best (rmse_3d_m)</h3>",
+                    "<div class=\"kv\">",
+                    f"<div><b>run_id</b>: <code>{html.escape(r.get('best_run_id',''))}</code></div>",
+                    f"<div><b>matched</b>: <code>{html.escape(r.get('matched_samples',''))}</code></div>",
+                    f"<div><b>rmse_3d_m</b>: <code>{html.escape(r.get('rmse_3d_m',''))}</code></div>",
+                    f"<div><b>rmse_3d_nobias_m</b>: <code>{html.escape(r.get('rmse_3d_nobias_m',''))}</code></div>",
+                    f"<div><b>yaw_ref</b>: <code>{html.escape(r.get('yaw_reference',''))}</code></div>",
+                    f"<div><b>yaw_rmse_deg</b>: <code>{html.escape(r.get('yaw_rmse_deg',''))}</code></div>",
+                    f"<div><b>att_angle_rmse_deg</b>: <code>{html.escape(r.get('attitude_angle_rmse_deg',''))}</code></div>",
+                    "</div>",
+                    "<div class=\"imgs\">",
+                    maybe_img(raw_xy, f"{bag} trajectory XY (best)"),
+                    maybe_img(raw_ts, f"{bag} timeseries z+RPY (best)"),
+                    "</div>",
+                    "</div>",
+                    "<div class=\"panel\">",
+                    "<h3>Best (rmse_3d_nobias_m)</h3>",
+                    "<div class=\"kv\">",
+                    f"<div><b>run_id</b>: <code>{html.escape(r.get('best_nobias_run_id',''))}</code></div>",
+                    f"<div><b>matched</b>: <code>{html.escape(r.get('best_nobias_matched_samples',''))}</code></div>",
+                    f"<div><b>rmse_3d_m</b>: <code>{html.escape(r.get('best_nobias_rmse_3d_m',''))}</code></div>",
+                    f"<div><b>rmse_3d_nobias_m</b>: <code>{html.escape(r.get('best_nobias_rmse_3d_nobias_m',''))}</code></div>",
+                    f"<div><b>yaw_ref</b>: <code>{html.escape(r.get('best_nobias_yaw_reference',''))}</code></div>",
+                    f"<div><b>yaw_rmse_deg</b>: <code>{html.escape(r.get('best_nobias_yaw_rmse_deg',''))}</code></div>",
+                    f"<div><b>att_angle_rmse_deg</b>: <code>{html.escape(r.get('best_nobias_attitude_angle_rmse_deg',''))}</code></div>",
+                    "</div>",
+                    "<div class=\"imgs\">",
+                    maybe_img(nb_xy, f"{bag} trajectory XY (best nobias)"),
+                    maybe_img(nb_ts, f"{bag} timeseries z+RPY (best nobias)"),
+                    "</div>",
+                    "</div>",
+                    "</div>",
+                    "</section>",
+                ]
+            )
+        )
+
+    css = """
+    :root { color-scheme: light; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 8px 0; }
+    .sub { color: #333; margin: 0 0 18px 0; }
+    code { background: #f3f3f3; padding: 2px 6px; border-radius: 6px; }
+    .bag { border-top: 1px solid #ddd; padding-top: 18px; margin-top: 18px; }
+    .meta { margin: 8px 0 14px 0; color: #333; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .panel { border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }
+    .kv { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 10px; }
+    .imgs { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    img { width: 100%; height: auto; border: 1px solid #eee; border-radius: 10px; }
+    .missing { color: #888; font-style: italic; padding: 12px; border: 1px dashed #ccc; border-radius: 10px; }
+    """
+
+    summary_rel = html.escape(str(summary_csv.relative_to(suite_out)))
+    doc = "\n".join(
+        [
+            "<!doctype html>",
+            "<html>",
+            "<head>",
+            "<meta charset=\"utf-8\" />",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+            f"<title>istanbul_suite_report_{html.escape(stamp)}</title>",
+            f"<style>{css}</style>",
+            "</head>",
+            "<body>",
+            f"<h1>Istanbul Suite Report ({html.escape(stamp)})</h1>",
+            f"<p class=\"sub\">summary_csv: <code>{summary_rel}</code></p>",
+            *cards,
+            "</body>",
+            "</html>",
+        ]
+    )
+    report_path.write_text(doc, encoding="utf-8")
+    return report_path
 
 
 def main() -> int:
@@ -305,6 +431,10 @@ def main() -> int:
     best_plots = suite_out / "best_plots"
     if best_plots.exists():
         print(f"best_plots_dir: {best_plots}")
+    report_path = write_html_report(
+        suite_out=suite_out, stamp=stamp, summary_csv=summary_csv, summary_rows=summary_rows
+    )
+    print(f"report_html: {report_path}")
     return 0
 
 
