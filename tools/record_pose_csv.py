@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Record PoseStamped or Odometry topic into CSV."""
+"""Record pose/orientation topic into CSV.
+
+Supported message types:
+- geometry_msgs/PoseStamped
+- nav_msgs/Odometry
+- sensor_msgs/Imu (orientation only; position is written as 0)
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
+from sensor_msgs.msg import Imu
 
 
 class PoseCsvRecorder(Node):
@@ -47,6 +54,8 @@ class PoseCsvRecorder(Node):
             self._sub = self.create_subscription(PoseStamped, topic_name, self._pose_callback, qos)
         elif msg_type == "odometry":
             self._sub = self.create_subscription(Odometry, topic_name, self._odom_callback, qos)
+        elif msg_type == "imu":
+            self._sub = self.create_subscription(Imu, topic_name, self._imu_callback, qos)
         else:
             raise ValueError(f"unsupported msg_type: {msg_type}")
 
@@ -126,11 +135,25 @@ class PoseCsvRecorder(Node):
             qw=pose.orientation.w,
         )
 
+    def _imu_callback(self, msg: Imu) -> None:
+        q = msg.orientation
+        self._write_pose(
+            sec=msg.header.stamp.sec,
+            nanosec=msg.header.stamp.nanosec,
+            x=0.0,
+            y=0.0,
+            z=0.0,
+            qx=q.x,
+            qy=q.y,
+            qz=q.z,
+            qw=q.w,
+        )
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--topic", required=True)
-    p.add_argument("--msg-type", choices=["pose_stamped", "odometry"], default="pose_stamped")
+    p.add_argument("--msg-type", choices=["pose_stamped", "odometry", "imu"], default="pose_stamped")
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--qos-depth", type=int, default=10)
     p.add_argument("--duration-sec", type=float, default=None)

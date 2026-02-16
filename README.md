@@ -59,15 +59,15 @@ ekf_localization_node
 `tools/` contains scripts to evaluate and tune on open datasets.
 
 1. `tools/record_pose_csv.py`  
-   Record `PoseStamped` or `Odometry` topic to CSV.
+   Record `PoseStamped`, `Odometry`, or `Imu` (orientation only) topic to CSV.
 2. `tools/evaluate_trajectory.py`  
    Compute ATE-like metrics (3D/XY RMSE, P95, bias) from estimated vs ground-truth CSV.
 3. `tools/run_open_data_sweep.py`  
-   Run bag playback + EKF parameter grid search and output `summary.csv`.
+   Run bag playback + EKF parameter grid search and output `summary.csv` (optionally record attitude reference and plot best run).
 4. `tools/navsatfix_to_pose.py`  
    Convert `/fix (NavSatFix)` to `/gnss_pose (PoseStamped)` for EKF input/evaluation.
 5. `tools/plot_pose_csv.py`  
-   Plot XY trajectory (START/GOAL markers) and z+RPY time series. Yaw reference uses GT quaternion if available, otherwise course from GT positions.
+   Plot XY trajectory (START/GOAL markers) and z+RPY time series. Yaw reference uses attitude reference CSV (if provided), otherwise GT quaternion (if available), otherwise course from GT positions.
 
 Example:
 
@@ -97,6 +97,8 @@ python3 src/kalman_filter_localization/tools/navsatfix_to_pose.py \
   --output-frame-id map
 ```
 
+For Autoware Istanbul all-sensors bags, `tools/param_grid_istanbul_quick.json` is a good starting point (it fixes `gravity_mps2: 0.0`).
+
 Then run a quick sweep on selected topics:
 
 ```bash
@@ -115,6 +117,20 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --max-runs 4
 ```
 
+If you also want plots for the best run and an attitude reference, set `--attitude-reference-topic` and `--plot-best`:
+
+```bash
+python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
+  --bag-path /path/to/open_data_bag \
+  --param-grid-json src/kalman_filter_localization/tools/param_grid_quick.json \
+  --output-dir /tmp/kfl_benchmark_quick \
+  --imu-topic /sensing/imu/imu_data \
+  --gnss-topic /gnss_pose \
+  --ground-truth-topic /gnss_pose \
+  --attitude-reference-topic /sensing/imu/imu_data \
+  --plot-best
+```
+
 Plot the resulting CSV for a run:
 
 ```bash
@@ -123,6 +139,24 @@ python3 src/kalman_filter_localization/tools/plot_pose_csv.py \
   --ground-truth-csv /tmp/kfl_benchmark_quick/run_003/ground_truth.csv \
   --output-dir /tmp/kfl_benchmark_quick/run_003 \
   --prefix run_003
+```
+
+To compare attitude against an IMU-or-INS reference, record the IMU orientation as CSV and pass it as `--attitude-reference-csv`:
+
+```bash
+python3 src/kalman_filter_localization/tools/record_pose_csv.py \
+  --topic /sensing/imu/imu_data \
+  --msg-type imu \
+  --output /tmp/imu_orientation.csv
+```
+
+```bash
+python3 src/kalman_filter_localization/tools/plot_pose_csv.py \
+  --estimated-csv /tmp/kfl_benchmark_quick/run_003/estimated.csv \
+  --ground-truth-csv /tmp/kfl_benchmark_quick/run_003/ground_truth.csv \
+  --attitude-reference-csv /tmp/imu_orientation.csv \
+  --output-dir /tmp/kfl_benchmark_quick/run_003 \
+  --prefix run_003_with_imu_ref
 ```
 
 ## Dataset Profiles
@@ -137,6 +171,11 @@ Tuned profile files are available under `kalman_filter_localization_ros2/param/p
     - `max_imu_dt_sec: 0.5`
     - `var_gnss_xy: 0.2`
     - `var_gnss_z: 0.1`
+
+- `istanbul_all_sensors_bag.yaml`
+  - Profile for Autoware Istanbul all-sensors bags
+  - Key values:
+    - `gravity_mps2: 0.0` (IMU acceleration appears gravity-compensated)
 
 Example launch with this profile and IMU frame override:
 
