@@ -17,6 +17,13 @@ ekf_localization:
       use_flat_ground: true
       var_flat_ground_rp: 0.03
 
+      # Stabilize yaw using GNSS course (requires sufficient motion).
+      use_gnss_course_yaw: true
+      var_gnss_course_yaw: 0.05
+      min_gnss_course_distance_m: 1.0
+      min_gnss_course_speed_mps: 0.5
+      max_gnss_course_dt_sec: 1.0
+
       # Tuned starting point (see tools/param_grid_istanbul_quick.json).
       var_imu_w: 0.005
       var_imu_acc: 0.01
@@ -27,4 +34,3 @@ ekf_localization:
 
       use_gnss: true
       use_odom: false
-
