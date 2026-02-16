@@ -112,6 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="forwarded to tools/run_open_data_sweep.py",
     )
     p.add_argument(
+        "--attitude-min-speed-mps",
+        type=float,
+        default=0.5,
+        help="forwarded to tools/run_open_data_sweep.py",
+    )
+    p.add_argument(
         "--no-attitude-reference",
         action="store_true",
         help="do not record IMU attitude reference CSV (plots will use GT quaternion if available)",
@@ -318,6 +324,8 @@ def main() -> int:
             "--plot-best",
             "--eval-max-time-gap-sec",
             f"{args.eval_max_time_gap_sec:.12g}",
+            "--attitude-min-speed-mps",
+            f"{args.attitude_min_speed_mps:.12g}",
             "--play-rate",
             f"{args.play_rate:.12g}",
         ]
