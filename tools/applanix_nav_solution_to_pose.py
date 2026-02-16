@@ -22,6 +22,7 @@ import argparse
 import math
 import sys
 from dataclasses import dataclass
+from typing import List, Tuple
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -35,6 +36,94 @@ except ImportError:  # pragma: no cover
 
 
 EARTH_RADIUS_M = 6378137.0
+
+
+def quat_from_rpy(roll: float, pitch: float, yaw: float) -> Tuple[float, float, float, float]:
+    """Quaternion from roll/pitch/yaw using ROS standard (Z-Y-X / yaw-pitch-roll)."""
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+
+    qw = cy * cp * cr + sy * sp * sr
+    qx = cy * cp * sr - sy * sp * cr
+    qy = cy * sp * cr + sy * cp * sr
+    qz = sy * cp * cr - cy * sp * sr
+
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if not (n > 0.0) or not math.isfinite(n):
+        return 0.0, 0.0, 0.0, 1.0
+    return qx / n, qy / n, qz / n, qw / n
+
+
+def quat_to_rot(qx: float, qy: float, qz: float, qw: float) -> List[List[float]]:
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if not (n > 0.0) or not math.isfinite(n):
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
+
+    xx = qx * qx
+    yy = qy * qy
+    zz = qz * qz
+    xy = qx * qy
+    xz = qx * qz
+    yz = qy * qz
+    wx = qw * qx
+    wy = qw * qy
+    wz = qw * qz
+
+    return [
+        [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+        [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+        [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+    ]
+
+
+def rot_to_quat(R: List[List[float]]) -> Tuple[float, float, float, float]:
+    r00, r01, r02 = R[0]
+    r10, r11, r12 = R[1]
+    r20, r21, r22 = R[2]
+
+    trace = r00 + r11 + r22
+    if trace > 0.0:
+        s = math.sqrt(trace + 1.0) * 2.0
+        qw = 0.25 * s
+        qx = (r21 - r12) / s
+        qy = (r02 - r20) / s
+        qz = (r10 - r01) / s
+    elif r00 > r11 and r00 > r22:
+        s = math.sqrt(1.0 + r00 - r11 - r22) * 2.0
+        qw = (r21 - r12) / s
+        qx = 0.25 * s
+        qy = (r01 + r10) / s
+        qz = (r02 + r20) / s
+    elif r11 > r22:
+        s = math.sqrt(1.0 + r11 - r00 - r22) * 2.0
+        qw = (r02 - r20) / s
+        qx = (r01 + r10) / s
+        qy = 0.25 * s
+        qz = (r12 + r21) / s
+    else:
+        s = math.sqrt(1.0 + r22 - r00 - r11) * 2.0
+        qw = (r10 - r01) / s
+        qx = (r02 + r20) / s
+        qy = (r12 + r21) / s
+        qz = 0.25 * s
+
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if not (n > 0.0) or not math.isfinite(n):
+        return 0.0, 0.0, 0.0, 1.0
+    return qx / n, qy / n, qz / n, qw / n
+
+
+def matmul(A: List[List[float]], B: List[List[float]]) -> List[List[float]]:
+    out = [[0.0, 0.0, 0.0] for _ in range(3)]
+    for i in range(3):
+        for j in range(3):
+            out[i][j] = A[i][0] * B[0][j] + A[i][1] * B[1][j] + A[i][2] * B[2][j]
+    return out
 
 
 @dataclass
@@ -51,6 +140,7 @@ class ApplanixNavSolutionToPose(Node):
         output_topic: str,
         output_frame_id: str,
         qos_depth: int,
+        orientation_mode: str,
     ) -> None:
         super().__init__("applanix_nav_solution_to_pose")
         self._origin: Origin | None = None
@@ -60,8 +150,10 @@ class ApplanixNavSolutionToPose(Node):
             NavigationSolutionGsof49, input_topic, self._callback, qos
         )
         self._output_frame_id = output_frame_id
+        self._orientation_mode = orientation_mode
         self.get_logger().info(
-            f"convert NavigationSolutionGsof49 '{input_topic}' -> PoseStamped '{output_topic}' frame={output_frame_id}"
+            f"convert NavigationSolutionGsof49 '{input_topic}' -> PoseStamped '{output_topic}' "
+            f"frame={output_frame_id} orientation_mode={orientation_mode}"
         )
 
     def _callback(self, msg: NavigationSolutionGsof49) -> None:
@@ -94,7 +186,29 @@ class ApplanixNavSolutionToPose(Node):
         pose.pose.position.x = x_east
         pose.pose.position.y = y_north
         pose.pose.position.z = z_up
-        pose.pose.orientation.w = 1.0
+        if self._orientation_mode == "identity":
+            pose.pose.orientation.w = 1.0
+        else:
+            roll_rad = math.radians(float(msg.roll))
+            pitch_rad = math.radians(float(msg.pitch))
+            yaw_rad = math.radians(float(msg.heading))
+
+            qx, qy, qz, qw = quat_from_rpy(roll_rad, pitch_rad, yaw_rad)
+
+            if self._orientation_mode == "ros":
+                # Match the applanix_driver_ros "enable_ned2enu_transform" behavior:
+                # - Convert navigation frame NED <-> ENU.
+                # - Convert body frame from Applanix (FRD) to ROS (FLU).
+                enu2ned = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]
+                applanix2ros = [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]]
+                R = quat_to_rot(qx, qy, qz, qw)
+                R_corr = matmul(matmul(enu2ned, R), applanix2ros)
+                qx, qy, qz, qw = rot_to_quat(R_corr)
+
+            pose.pose.orientation.x = qx
+            pose.pose.orientation.y = qy
+            pose.pose.orientation.z = qz
+            pose.pose.orientation.w = qw
         self._pub.publish(pose)
 
 
@@ -104,6 +218,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-topic", default="/ins_pose")
     p.add_argument("--output-frame-id", default="map")
     p.add_argument("--qos-depth", type=int, default=10)
+    p.add_argument(
+        "--orientation-mode",
+        choices=["identity", "raw_rpy", "ros"],
+        default="ros",
+        help=(
+            "orientation output mode. "
+            "'ros' converts roll/pitch/heading into a ROS-friendly quaternion (ENU + FLU). "
+            "'raw_rpy' uses roll/pitch/heading directly without frame conversion. "
+            "'identity' publishes an identity quaternion."
+        ),
+    )
     return p
 
 
@@ -125,6 +250,7 @@ def main() -> int:
         output_topic=args.output_topic,
         output_frame_id=args.output_frame_id,
         qos_depth=args.qos_depth,
+        orientation_mode=args.orientation_mode,
     )
     try:
         rclpy.spin(node)
