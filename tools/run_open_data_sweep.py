@@ -518,6 +518,7 @@ def main() -> int:
         metrics: Dict[str, object] = {
             "time_normalize": "",
             "time_align": "",
+            "yaw_reference": "",
             "est_time_offset_sec": "",
             "gt_time_offset_sec": "",
             "matched_samples": "",
@@ -532,6 +533,16 @@ def main() -> int:
             "bias_x_m": "",
             "bias_y_m": "",
             "bias_z_m": "",
+            "attitude_matched_samples": "",
+            "attitude_angle_rmse_deg": "",
+            "attitude_angle_mean_deg": "",
+            "roll_rmse_deg": "",
+            "pitch_rmse_deg": "",
+            "yaw_rmse_deg": "",
+            "roll_bias_deg": "",
+            "pitch_bias_deg": "",
+            "yaw_bias_deg": "",
+            "yaw_mae_deg": "",
         }
 
         if status == "ok":
@@ -551,6 +562,8 @@ def main() -> int:
                 "--output-json",
                 str(metrics_json),
             ]
+            if att_csv.exists():
+                eval_cmd.extend(["--attitude-reference-csv", str(att_csv)])
             eval_result = subprocess.run(
                 eval_cmd,
                 check=False,
@@ -564,6 +577,7 @@ def main() -> int:
                 metrics.update(payload["metrics"])
                 metrics["time_normalize"] = payload.get("time_normalize", "")
                 metrics["time_align"] = payload.get("time_align", "")
+                metrics["yaw_reference"] = payload.get("yaw_reference", "")
                 metrics["est_time_offset_sec"] = payload.get("est_time_offset_sec", "")
                 metrics["gt_time_offset_sec"] = payload.get("gt_time_offset_sec", "")
                 print(f"  rmse_3d_m={float(metrics['rmse_3d_m']):.6f}")
@@ -583,6 +597,7 @@ def main() -> int:
             *keys,
             "time_normalize",
             "time_align",
+            "yaw_reference",
             "est_time_offset_sec",
             "gt_time_offset_sec",
             "matched_samples",
@@ -597,6 +612,16 @@ def main() -> int:
             "bias_x_m",
             "bias_y_m",
             "bias_z_m",
+            "attitude_matched_samples",
+            "attitude_angle_rmse_deg",
+            "attitude_angle_mean_deg",
+            "roll_rmse_deg",
+            "pitch_rmse_deg",
+            "yaw_rmse_deg",
+            "roll_bias_deg",
+            "pitch_bias_deg",
+            "yaw_bias_deg",
+            "yaw_mae_deg",
         ]
         write_summary_csv(summary_path, rows, fieldnames)
 
@@ -611,6 +636,7 @@ def main() -> int:
             *keys,
             "time_normalize",
             "time_align",
+            "yaw_reference",
             "est_time_offset_sec",
             "gt_time_offset_sec",
             "matched_samples",
@@ -625,6 +651,16 @@ def main() -> int:
             "bias_x_m",
             "bias_y_m",
             "bias_z_m",
+            "attitude_matched_samples",
+            "attitude_angle_rmse_deg",
+            "attitude_angle_mean_deg",
+            "roll_rmse_deg",
+            "pitch_rmse_deg",
+            "yaw_rmse_deg",
+            "roll_bias_deg",
+            "pitch_bias_deg",
+            "yaw_bias_deg",
+            "yaw_mae_deg",
         ]
         write_summary_csv(ranking_path, successful_sorted, fieldnames)
 

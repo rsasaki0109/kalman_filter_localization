@@ -21,6 +21,11 @@ class PoseSample:
     x: float
     y: float
     z: float
+    # Optional orientation (record_pose_csv.py always writes it, but some external CSVs may not).
+    qx: float = 0.0
+    qy: float = 0.0
+    qz: float = 0.0
+    qw: float = 1.0
 
 
 UNIX_TO_GPS_EPOCH_OFFSET_SEC = 315964800.0  # 1970-01-01 -> 1980-01-06
@@ -44,7 +49,18 @@ def normalize_unix_to_gps_tow(samples: Sequence[PoseSample], gps_leap_seconds: i
         t_sec = s.t_sec
         if t_sec > 1.0e8:  # heuristic: unix epoch seconds are ~1e9+
             t_sec = (t_sec - UNIX_TO_GPS_EPOCH_OFFSET_SEC + float(gps_leap_seconds)) % GPS_WEEK_SEC
-        out.append(PoseSample(t_sec=t_sec, x=s.x, y=s.y, z=s.z))
+        out.append(
+            PoseSample(
+                t_sec=t_sec,
+                x=s.x,
+                y=s.y,
+                z=s.z,
+                qx=s.qx,
+                qy=s.qy,
+                qz=s.qz,
+                qw=s.qw,
+            )
+        )
     out.sort(key=lambda v: v.t_sec)
     return out
 
@@ -76,9 +92,50 @@ def shift_time(samples: Sequence[PoseSample], offset_sec: float) -> List[PoseSam
     if not (math.isfinite(offset_sec) and offset_sec != 0.0):
         return list(samples)
     return [
-        PoseSample(t_sec=s.t_sec - offset_sec, x=s.x, y=s.y, z=s.z)
+        PoseSample(
+            t_sec=s.t_sec - offset_sec,
+            x=s.x,
+            y=s.y,
+            z=s.z,
+            qx=s.qx,
+            qy=s.qy,
+            qz=s.qz,
+            qw=s.qw,
+        )
         for s in samples
     ]
+
+
+def wrap_to_pi(angle_rad: float) -> float:
+    while angle_rad > math.pi:
+        angle_rad -= 2.0 * math.pi
+    while angle_rad < -math.pi:
+        angle_rad += 2.0 * math.pi
+    return angle_rad
+
+
+def quat_to_rpy(qx: float, qy: float, qz: float, qw: float) -> Tuple[float, float, float]:
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if not (n > 0.0) or not math.isfinite(n):
+        return float("nan"), float("nan"), float("nan")
+    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
+
+    sinr_cosp = 2.0 * (qw * qx + qy * qz)
+    cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    sinp = 2.0 * (qw * qy - qz * qx)
+    if sinp >= 1.0:
+        pitch = math.pi / 2.0
+    elif sinp <= -1.0:
+        pitch = -math.pi / 2.0
+    else:
+        pitch = math.asin(sinp)
+
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    return roll, pitch, yaw
 
 
 def read_pose_csv(
@@ -105,12 +162,21 @@ def read_pose_csv(
             missing_text = ", ".join(sorted(missing))
             raise ValueError(f"{csv_path} missing required columns: {missing_text}")
 
+        has_quat = {"qx", "qy", "qz", "qw"}.issubset(set(reader.fieldnames))
+
         for line_no, row in enumerate(reader, start=2):
             try:
                 t_raw = float(row[time_col])
                 x = float(row[x_col])
                 y = float(row[y_col])
                 z = float(row[z_col])
+                if has_quat:
+                    qx = float(row["qx"])
+                    qy = float(row["qy"])
+                    qz = float(row["qz"])
+                    qw = float(row["qw"])
+                else:
+                    qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0
             except (TypeError, ValueError) as e:
                 raise ValueError(
                     f"{csv_path}:{line_no} contains non-numeric values for "
@@ -118,9 +184,9 @@ def read_pose_csv(
                 ) from e
 
             t_sec = t_raw * time_scale
-            if not all(math.isfinite(v) for v in (t_sec, x, y, z)):
+            if not all(math.isfinite(v) for v in (t_sec, x, y, z, qx, qy, qz, qw)):
                 continue
-            rows.append(PoseSample(t_sec=t_sec, x=x, y=y, z=z))
+            rows.append(PoseSample(t_sec=t_sec, x=x, y=y, z=z, qx=qx, qy=qy, qz=qz, qw=qw))
 
     rows.sort(key=lambda s: s.t_sec)
     return rows
@@ -164,6 +230,158 @@ def match_pose_at_time(
         z=(1.0 - alpha) * left.z + alpha * right.z,
     )
     return interp, t_sec - left.t_sec, right.t_sec - t_sec
+
+
+def quat_sequence_is_identity(samples: Sequence[PoseSample], tol: float = 1e-6) -> bool:
+    if not samples:
+        return True
+    num_identity = 0
+    for s in samples:
+        if abs(s.qw - 1.0) < tol and abs(s.qx) < tol and abs(s.qy) < tol and abs(s.qz) < tol:
+            num_identity += 1
+    return (num_identity / len(samples)) > 0.95
+
+
+def match_segment_at_time(
+    samples: Sequence[PoseSample], times: Sequence[float], t_sec: float
+) -> Optional[Tuple[PoseSample, PoseSample, float, float]]:
+    if len(samples) < 2:
+        return None
+
+    idx = bisect_left(times, t_sec)
+    if idx == 0:
+        return None
+    if idx >= len(samples):
+        return None
+
+    left = samples[idx - 1]
+    right = samples[idx]
+    gap_left = t_sec - left.t_sec
+    gap_right = right.t_sec - t_sec
+    if gap_left < 0.0 or gap_right < 0.0:
+        return None
+    return left, right, gap_left, gap_right
+
+
+def quat_angle_error_deg(est: PoseSample, ref: PoseSample) -> Optional[float]:
+    """Shortest rotation angle between two quaternions in degrees."""
+
+    def normalize(qx: float, qy: float, qz: float, qw: float) -> Optional[Tuple[float, float, float, float]]:
+        n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+        if not (n > 0.0) or not math.isfinite(n):
+            return None
+        return qx / n, qy / n, qz / n, qw / n
+
+    q_est = normalize(est.qx, est.qy, est.qz, est.qw)
+    q_ref = normalize(ref.qx, ref.qy, ref.qz, ref.qw)
+    if q_est is None or q_ref is None:
+        return None
+
+    ex, ey, ez, ew = q_est
+    rx, ry, rz, rw = q_ref
+    dot = ex * rx + ey * ry + ez * rz + ew * rw
+    dot = max(-1.0, min(1.0, abs(dot)))
+    angle_rad = 2.0 * math.acos(dot)
+    return angle_rad * 180.0 / math.pi
+
+
+def rmse(values: Sequence[float]) -> float:
+    if not values:
+        raise ValueError("rmse() requires at least one value")
+    return math.sqrt(sum(v * v for v in values) / float(len(values)))
+
+
+def compute_attitude_metrics(
+    est: Sequence[PoseSample],
+    gt: Sequence[PoseSample],
+    attitude_ref: Optional[Sequence[PoseSample]],
+    *,
+    max_time_gap_sec: float,
+    yaw_reference: str,
+) -> Dict[str, float]:
+    """Compute optional attitude metrics based on EST quaternion and a chosen reference."""
+    if not est or not gt:
+        return {}
+    if max_time_gap_sec <= 0.0 or not math.isfinite(max_time_gap_sec):
+        raise ValueError("max_time_gap_sec must be finite and > 0.0")
+
+    out: Dict[str, float] = {}
+
+    if yaw_reference in ("gt_quat", "attitude_csv"):
+        ref = gt if yaw_reference == "gt_quat" else (attitude_ref or [])
+        if len(ref) < 2:
+            return {}
+        ref_times = [s.t_sec for s in ref]
+
+        err_roll_deg: List[float] = []
+        err_pitch_deg: List[float] = []
+        err_yaw_deg: List[float] = []
+        err_angle_deg: List[float] = []
+
+        for s in est:
+            seg = match_segment_at_time(ref, ref_times, s.t_sec)
+            if seg is None:
+                continue
+            left, right, gap_left, gap_right = seg
+            if min(gap_left, gap_right) > max_time_gap_sec:
+                continue
+            ref_s = left if gap_left <= gap_right else right
+
+            roll_ref, pitch_ref, yaw_ref = quat_to_rpy(ref_s.qx, ref_s.qy, ref_s.qz, ref_s.qw)
+            roll_est, pitch_est, yaw_est = quat_to_rpy(s.qx, s.qy, s.qz, s.qw)
+            if not all(
+                math.isfinite(v) for v in (roll_ref, pitch_ref, yaw_ref, roll_est, pitch_est, yaw_est)
+            ):
+                continue
+
+            err_roll_deg.append(wrap_to_pi(roll_est - roll_ref) * 180.0 / math.pi)
+            err_pitch_deg.append(wrap_to_pi(pitch_est - pitch_ref) * 180.0 / math.pi)
+            err_yaw_deg.append(wrap_to_pi(yaw_est - yaw_ref) * 180.0 / math.pi)
+
+            ang = quat_angle_error_deg(s, ref_s)
+            if ang is not None and math.isfinite(ang):
+                err_angle_deg.append(ang)
+
+        if err_yaw_deg:
+            out["attitude_matched_samples"] = float(len(err_yaw_deg))
+            out["roll_rmse_deg"] = rmse(err_roll_deg)
+            out["pitch_rmse_deg"] = rmse(err_pitch_deg)
+            out["yaw_rmse_deg"] = rmse(err_yaw_deg)
+            out["roll_bias_deg"] = statistics.mean(err_roll_deg)
+            out["pitch_bias_deg"] = statistics.mean(err_pitch_deg)
+            out["yaw_bias_deg"] = statistics.mean(err_yaw_deg)
+            out["yaw_mae_deg"] = statistics.mean(abs(v) for v in err_yaw_deg)
+            if err_angle_deg:
+                out["attitude_angle_rmse_deg"] = rmse(err_angle_deg)
+                out["attitude_angle_mean_deg"] = statistics.mean(err_angle_deg)
+        return out
+
+    # yaw_reference == "gt_course": course from GT positions
+    gt_times = [s.t_sec for s in gt]
+    err_yaw_deg: List[float] = []
+    for s in est:
+        seg = match_segment_at_time(gt, gt_times, s.t_sec)
+        if seg is None:
+            continue
+        left, right, gap_left, gap_right = seg
+        if min(gap_left, gap_right) > max_time_gap_sec:
+            continue
+        dx = right.x - left.x
+        dy = right.y - left.y
+        if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+            continue
+        yaw_ref = math.atan2(dy, dx)
+        _, _, yaw_est = quat_to_rpy(s.qx, s.qy, s.qz, s.qw)
+        if not (math.isfinite(yaw_ref) and math.isfinite(yaw_est)):
+            continue
+        err_yaw_deg.append(wrap_to_pi(yaw_est - yaw_ref) * 180.0 / math.pi)
+
+    if err_yaw_deg:
+        out["attitude_matched_samples"] = float(len(err_yaw_deg))
+        out["yaw_rmse_deg"] = rmse(err_yaw_deg)
+        out["yaw_bias_deg"] = statistics.mean(err_yaw_deg)
+        out["yaw_mae_deg"] = statistics.mean(abs(v) for v in err_yaw_deg)
+    return out
 
 
 def percentile(sorted_values: Sequence[float], q: float) -> float:
@@ -279,6 +497,20 @@ def format_metrics(metrics: Dict[str, float]) -> str:
         f"bias_y_m: {metrics['bias_y_m']:.6f}",
         f"bias_z_m: {metrics['bias_z_m']:.6f}",
     ]
+    if "attitude_matched_samples" in metrics:
+        lines.append(f"attitude_matched_samples: {int(metrics['attitude_matched_samples'])}")
+    if "yaw_rmse_deg" in metrics:
+        lines.append(f"yaw_rmse_deg: {metrics['yaw_rmse_deg']:.3f}")
+    if "yaw_bias_deg" in metrics:
+        lines.append(f"yaw_bias_deg: {metrics['yaw_bias_deg']:.3f}")
+    if "yaw_mae_deg" in metrics:
+        lines.append(f"yaw_mae_deg: {metrics['yaw_mae_deg']:.3f}")
+    if "roll_rmse_deg" in metrics:
+        lines.append(f"roll_rmse_deg: {metrics['roll_rmse_deg']:.3f}")
+    if "pitch_rmse_deg" in metrics:
+        lines.append(f"pitch_rmse_deg: {metrics['pitch_rmse_deg']:.3f}")
+    if "attitude_angle_rmse_deg" in metrics:
+        lines.append(f"attitude_angle_rmse_deg: {metrics['attitude_angle_rmse_deg']:.3f}")
     return "\n".join(lines)
 
 
@@ -286,6 +518,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--estimated-csv", required=True, type=Path)
     p.add_argument("--ground-truth-csv", required=True, type=Path)
+    p.add_argument(
+        "--attitude-reference-csv",
+        type=Path,
+        default=None,
+        help=(
+            "optional orientation reference CSV (tools/record_pose_csv.py format). "
+            "When provided, attitude metrics are computed in addition to trajectory metrics."
+        ),
+    )
 
     p.add_argument("--est-time-col", default="t_sec")
     p.add_argument("--est-x-col", default="x")
@@ -331,6 +572,12 @@ def build_parser() -> argparse.ArgumentParser:
             "'auto' selects absolute/relative based on which yields more matches."
         ),
     )
+    p.add_argument(
+        "--yaw-reference",
+        choices=["auto", "gt_quat", "gt_course", "attitude_csv"],
+        default="auto",
+        help="reference yaw source for attitude metrics. auto prefers attitude_csv, then gt_quat, otherwise gt_course",
+    )
     p.add_argument("--output-json", type=Path, default=None)
     return p
 
@@ -355,12 +602,26 @@ def main() -> int:
             z_col=args.gt_z_col,
             time_scale=args.gt_time_scale,
         )
+        attitude_ref: Optional[List[PoseSample]] = None
+        if args.attitude_reference_csv is not None:
+            attitude_ref = read_pose_csv(
+                csv_path=args.attitude_reference_csv,
+                time_col=args.est_time_col,
+                x_col=args.est_x_col,
+                y_col=args.est_y_col,
+                z_col=args.est_z_col,
+                time_scale=args.est_time_scale,
+            )
         est_samples = filter_pose_samples(
             est_samples, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12
         )
         gt_samples = filter_pose_samples(
             gt_samples, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12
         )
+        if attitude_ref is not None:
+            attitude_ref = filter_pose_samples(
+                attitude_ref, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12
+            )
 
         time_align_candidates = (
             ["absolute", "relative"] if args.time_align == "auto" else [args.time_align]
@@ -442,6 +703,49 @@ def main() -> int:
             filtered, key=score
         )
         metrics = best_metrics
+
+        # Optional attitude metrics using the selected alignment.
+        est_norm = apply_time_normalize(
+            est_samples, mode=used_time_normalize, gps_leap_seconds=args.gps_leap_seconds
+        )
+        gt_norm = apply_time_normalize(
+            gt_samples, mode=used_time_normalize, gps_leap_seconds=args.gps_leap_seconds
+        )
+        att_norm = (
+            apply_time_normalize(attitude_ref, mode=used_time_normalize, gps_leap_seconds=args.gps_leap_seconds)
+            if attitude_ref is not None
+            else None
+        )
+        est_aligned = shift_time(est_norm, est_time_offset_sec) if used_time_align == "relative" else est_norm
+        gt_aligned = shift_time(gt_norm, gt_time_offset_sec) if used_time_align == "relative" else gt_norm
+        att_aligned: Optional[List[PoseSample]] = None
+        if att_norm is not None:
+            if used_time_align == "relative":
+                att_aligned = shift_time(att_norm, att_norm[0].t_sec) if att_norm else []
+            else:
+                att_aligned = list(att_norm)
+
+        has_att_quat = bool(att_aligned) and not quat_sequence_is_identity(att_aligned or [])
+        has_gt_quat = not quat_sequence_is_identity(gt_aligned)
+        yaw_reference = args.yaw_reference
+        if yaw_reference == "auto":
+            if has_att_quat:
+                yaw_reference = "attitude_csv"
+            else:
+                yaw_reference = "gt_quat" if has_gt_quat else "gt_course"
+        if yaw_reference == "attitude_csv" and not has_att_quat:
+            yaw_reference = "gt_quat" if has_gt_quat else "gt_course"
+        if yaw_reference == "gt_quat" and not has_gt_quat:
+            yaw_reference = "attitude_csv" if has_att_quat else "gt_course"
+
+        att_metrics = compute_attitude_metrics(
+            est=est_aligned,
+            gt=gt_aligned,
+            attitude_ref=att_aligned,
+            max_time_gap_sec=args.max_time_gap_sec,
+            yaw_reference=yaw_reference,
+        )
+        metrics.update(att_metrics)
     except Exception as e:  # pylint: disable=broad-except
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
@@ -451,6 +755,8 @@ def main() -> int:
     print(f"ground_truth_csv: {args.ground_truth_csv}")
     print(f"time_normalize: {used_time_normalize}")
     print(f"time_align: {used_time_align}")
+    if "yaw_rmse_deg" in metrics:
+        print(f"yaw_reference: {yaw_reference}")
     print(format_metrics(metrics))
 
     if args.output_json is not None:
@@ -458,12 +764,14 @@ def main() -> int:
         payload = {
             "estimated_csv": str(args.estimated_csv),
             "ground_truth_csv": str(args.ground_truth_csv),
+            "attitude_reference_csv": str(args.attitude_reference_csv) if args.attitude_reference_csv else "",
             "max_time_gap_sec": args.max_time_gap_sec,
             "time_normalize": used_time_normalize,
             "gps_leap_seconds": args.gps_leap_seconds,
             "time_align": used_time_align,
             "est_time_offset_sec": est_time_offset_sec,
             "gt_time_offset_sec": gt_time_offset_sec,
+            "yaw_reference": yaw_reference,
             "metrics": metrics,
         }
         args.output_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
