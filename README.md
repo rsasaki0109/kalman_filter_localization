@@ -53,6 +53,7 @@ ekf_localization_node
 |var_imu_acc|double|0.01|variance of an accelerometer[(m/sec^2)^2]|
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
+|output_stamp_source|string|latest_input|timestamp source for `current_pose.header.stamp` (`latest_input`, `imu`, `ros_time`)|
 
 ## Open-Data Benchmark
 

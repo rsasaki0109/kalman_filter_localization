@@ -350,7 +350,10 @@ def main() -> int:
             else [args.time_normalize]
         )
 
-        best_metrics: Optional[Dict[str, float]] = None
+        # Keep all successful candidates and select the best at the end.
+        # Auto modes are only heuristics; prefer stable/low-error alignment over
+        # maximizing matched_samples blindly (which can hide timestamp-domain mixups).
+        candidates: List[Tuple[Dict[str, float], str, str, float, float]] = []
         used_time_align = "absolute"
         used_time_normalize = "none"
         est_time_offset_sec = 0.0
@@ -386,48 +389,37 @@ def main() -> int:
                 except Exception as e:  # pylint: disable=broad-except
                     last_error = e
                     continue
+                candidates.append((metrics, time_align, time_normalize, est_off, gt_off))
 
-                if best_metrics is None:
-                    best_metrics = metrics
-                    used_time_align = time_align
-                    used_time_normalize = time_normalize
-                    est_time_offset_sec = est_off
-                    gt_time_offset_sec = gt_off
-                    continue
-
-                matched = int(metrics["matched_samples"])
-                best_matched = int(best_metrics["matched_samples"])
-                rmse = float(metrics["rmse_3d_m"])
-                best_rmse = float(best_metrics["rmse_3d_m"])
-
-                better = False
-                if matched > best_matched:
-                    better = True
-                elif matched == best_matched:
-                    if rmse < best_rmse - 1e-12:
-                        better = True
-                    elif abs(rmse - best_rmse) <= 1e-12:
-                        # Prefer smaller transformations when equivalent.
-                        if used_time_align == "relative" and time_align == "absolute":
-                            better = True
-                        elif used_time_align == time_align:
-                            if used_time_normalize == "unix_to_gps_tow" and time_normalize == "none":
-                                better = True
-
-                if better:
-                    best_metrics = metrics
-                    used_time_align = time_align
-                    used_time_normalize = time_normalize
-                    est_time_offset_sec = est_off
-                    gt_time_offset_sec = gt_off
-
-        if best_metrics is None:
+        if not candidates:
             if last_error is not None:
                 raise last_error
             raise RuntimeError(
                 "No matched samples. Check topic time alignment, columns, and max_time_gap_sec."
             )
 
+        # Avoid selecting alignments with too few matches, which can spuriously lower RMSE.
+        max_matches = max(int(m["matched_samples"]) for m, *_ in candidates)
+        min_matches = max(30, int(math.floor(max_matches * 0.05)))
+        filtered = [c for c in candidates if int(c[0]["matched_samples"]) >= min_matches]
+        if not filtered:
+            filtered = candidates
+
+        def score(c: Tuple[Dict[str, float], str, str, float, float]) -> Tuple[float, int, int]:
+            metrics, time_align, time_normalize, _, _ = c
+            rmse = float(metrics["rmse_3d_m"])
+            matched = int(metrics["matched_samples"])
+            transform_penalty = 0
+            if time_align == "relative":
+                transform_penalty += 1
+            if time_normalize == "unix_to_gps_tow":
+                transform_penalty += 1
+            # Primary: lower RMSE. Secondary: more matches. Tertiary: fewer transforms.
+            return rmse, -matched, transform_penalty
+
+        best_metrics, used_time_align, used_time_normalize, est_time_offset_sec, gt_time_offset_sec = min(
+            filtered, key=score
+        )
         metrics = best_metrics
     except Exception as e:  # pylint: disable=broad-except
         print(f"ERROR: {e}", file=sys.stderr)
