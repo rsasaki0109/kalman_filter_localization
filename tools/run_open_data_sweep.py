@@ -53,7 +53,10 @@ def ros_value(v: object) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, float):
-        return f"{v:.12g}"
+        text = f"{v:.12g}"
+        if "e" not in text and "." not in text:
+            text += ".0"
+        return text
     return str(v)
 
 
@@ -148,6 +151,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p.add_argument("--play-rate", type=float, default=1.0)
+    p.add_argument(
+        "--play-topics",
+        nargs="+",
+        default=None,
+        help="optional list of topics to replay (reduces playback load)",
+    )
+    p.add_argument("--bag-start-offset-sec", type=float, default=0.0)
     p.add_argument("--startup-sec", type=float, default=2.0)
     p.add_argument("--tail-sec", type=float, default=1.0)
     p.add_argument("--eval-max-time-gap-sec", type=float, default=0.1)
@@ -170,6 +180,9 @@ def main() -> int:
         return 2
     if args.play_rate <= 0.0:
         print("ERROR: --play-rate must be > 0", file=sys.stderr)
+        return 2
+    if args.bag_start_offset_sec < 0.0:
+        print("ERROR: --bag-start-offset-sec must be >= 0", file=sys.stderr)
         return 2
 
     try:
@@ -294,17 +307,34 @@ def main() -> int:
                     "topic",
                     "pub",
                     "--once",
+                    "--wait-matching-subscriptions",
+                    "0",
                     args.initial_pose_topic,
                     "geometry_msgs/msg/PoseStamped",
                     pose_yaml,
                 ]
-                subprocess.run(
-                    pub_cmd,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
+                try:
+                    pub_result = subprocess.run(
+                        pub_cmd,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=10,
+                    )
+                    (run_dir / "initial_pose_pub.log").write_text(
+                        pub_result.stdout, encoding="utf-8"
+                    )
+                    if pub_result.returncode != 0:
+                        print(
+                            f"  warning: initial pose publish failed (code={pub_result.returncode})"
+                        )
+                except subprocess.TimeoutExpired as e:
+                    timeout_text = e.stdout or ""
+                    (run_dir / "initial_pose_pub.log").write_text(
+                        timeout_text + "\nTIMEOUT\n", encoding="utf-8"
+                    )
+                    print("  warning: initial pose publish timed out")
 
             play_cmd = [
                 "ros2",
@@ -315,6 +345,10 @@ def main() -> int:
                 "--rate",
                 f"{args.play_rate:.12g}",
             ]
+            if args.bag_start_offset_sec > 0.0:
+                play_cmd.extend(["--start-offset", f"{args.bag_start_offset_sec:.12g}"])
+            if args.play_topics:
+                play_cmd.extend(["--topics", *args.play_topics])
             with (run_dir / "bag_play.log").open("w", encoding="utf-8") as f:
                 subprocess.run(play_cmd, check=True, stdout=f, stderr=subprocess.STDOUT)
 

@@ -147,7 +147,9 @@ def evaluate(
             continue
         gt_interp, gap_left, gap_right = matched
 
-        if max(gap_left, gap_right) > max_time_gap_sec:
+        # Use nearest neighbor gap gate so lower-rate ground truth can still be
+        # evaluated with interpolation.
+        if min(gap_left, gap_right) > max_time_gap_sec:
             continue
 
         dx = est.x - gt_interp.x
