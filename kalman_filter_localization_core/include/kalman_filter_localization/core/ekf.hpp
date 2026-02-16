@@ -144,18 +144,21 @@ public:
       return PredictionUpdateStatus::kDtTooLarge;
     }
 
-    const Eigen::Quaterniond quat_wdt = Eigen::Quaterniond(
-      Eigen::AngleAxisd(gyro.x() * dt_imu, Eigen::Vector3d::UnitX()) *
-      Eigen::AngleAxisd(gyro.y() * dt_imu, Eigen::Vector3d::UnitY()) *
-      Eigen::AngleAxisd(gyro.z() * dt_imu, Eigen::Vector3d::UnitZ()));
+    // Integrate angular velocity using the exponential map.
+    const Eigen::Vector3d wdt = gyro * dt_imu;
+    const double wdt_norm = wdt.norm();
+    const Eigen::Quaterniond quat_wdt =
+      (wdt_norm > 0.0) ?
+      Eigen::Quaterniond(Eigen::AngleAxisd(wdt_norm, wdt / wdt_norm)) :
+      Eigen::Quaterniond::Identity();
     const Eigen::Vector3d acc = Eigen::Vector3d(
       linear_acceleration.x(),
       linear_acceleration.y(),
       linear_acceleration.z());
 
     // state
-    const Eigen::Quaterniond previous_quat =
-      Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    Eigen::Quaterniond previous_quat(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    previous_quat.normalize();
     const Eigen::Matrix3d rot_mat = previous_quat.toRotationMatrix();
 
     // pos
@@ -164,7 +167,7 @@ public:
     // vel
     x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * acc - gravity_);
     // quat
-    const Eigen::Quaterniond predicted_quat = quat_wdt * previous_quat;
+    const Eigen::Quaterniond predicted_quat = (quat_wdt * previous_quat).normalized();
     x_.segment(STATE::QX, 4) = Eigen::Vector4d(
       predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
 
@@ -198,6 +201,67 @@ public:
   {
     previous_time_imu_ = 0.0;
     has_previous_time_imu_ = false;
+  }
+
+  // Backward-compatible API: orientation observation update without status.
+  void observationUpdateOrientation(
+    const Eigen::Quaterniond & y_quat,
+    const Eigen::Vector3d & variance_rpy_rad2)
+  {
+    (void)observationUpdateOrientationWithStatus(y_quat, variance_rpy_rad2);
+  }
+
+  // Orientation observation update. This directly constrains the attitude error state.
+  //
+  // The measurement is a quaternion in the same frame convention as the EKF state
+  // (world <- body), with per-axis RPY variances (rad^2) used as a diagonal noise model.
+  ObservationUpdateStatus observationUpdateOrientationWithStatus(
+    const Eigen::Quaterniond & y_quat,
+    const Eigen::Vector3d & variance_rpy_rad2)
+  {
+    if (!variance_rpy_rad2.allFinite() || (variance_rpy_rad2.array() <= 0.0).any()) {
+      return ObservationUpdateStatus::kInvalidVariance;
+    }
+    if (!y_quat.coeffs().allFinite() || y_quat.norm() <= 0.0) {
+      return ObservationUpdateStatus::kInvalidMeasurement;
+    }
+
+    const Eigen::Quaterniond y = y_quat.normalized();
+    Eigen::Quaterniond q_est(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    q_est.normalize();
+
+    // Error quaternion: dq ~= q_est^{-1} * y
+    Eigen::Quaterniond dq = q_est.conjugate() * y;
+    dq.normalize();
+    // Ensure shortest-arc representation (q and -q are equivalent).
+    if (dq.w() < 0.0) {
+      dq.coeffs() *= -1.0;
+    }
+
+    // Axis-angle innovation (robust even if the initial error is not tiny).
+    const Eigen::AngleAxisd aa(dq);
+    const Eigen::Vector3d innov = aa.axis() * aa.angle();
+    if (!innov.allFinite()) {
+      return ObservationUpdateStatus::kInvalidMeasurement;
+    }
+
+    // Measurement model: innov ≈ dtheta + noise
+    Eigen::Matrix3d R = Eigen::Matrix3d::Zero();
+    R(0, 0) = variance_rpy_rad2.x();
+    R(1, 1) = variance_rpy_rad2.y();
+    R(2, 2) = variance_rpy_rad2.z();
+
+    Eigen::Matrix<double, 3, num_error_state_> H =
+      Eigen::Matrix<double, 3, num_error_state_>::Zero();
+    H.block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
+
+    const Eigen::Matrix<double, num_error_state_, 3> K =
+      P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
+    const Eigen::Matrix<double, num_error_state_, 1> dx = K * innov;
+
+    applyErrorState(dx);
+    P_ = (EigenMatrix9d::Identity() - K * H) * P_;
+    return ObservationUpdateStatus::kUpdated;
   }
 
 /*
@@ -246,31 +310,7 @@ public:
       P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
     const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - x_.segment(STATE::X, 3));
 
-    // state
-    x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dx.segment(ERROR_STATE::DX, 3);
-    x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dx.segment(ERROR_STATE::DVX, 3);
-    const double norm_quat = std::sqrt(
-      std::pow(dx(ERROR_STATE::DTHX), 2) +
-      std::pow(dx(ERROR_STATE::DTHY), 2) +
-      std::pow(dx(ERROR_STATE::DTHZ), 2));
-
-    if (norm_quat < 1e-10) {
-      const Eigen::Quaterniond dq = Eigen::Quaterniond(std::cos(norm_quat / 2), 0, 0, 0);
-      const Eigen::Quaterniond q =
-        Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
-      const Eigen::Quaterniond q_new = q * dq;
-      x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
-    } else {
-      const Eigen::Quaterniond dq = Eigen::Quaterniond(
-        std::cos(norm_quat / 2),
-        std::sin(norm_quat / 2) * dx(ERROR_STATE::DTHX) / norm_quat,
-        std::sin(norm_quat / 2) * dx(ERROR_STATE::DTHY) / norm_quat,
-        std::sin(norm_quat / 2) * dx(ERROR_STATE::DTHZ) / norm_quat);
-      const Eigen::Quaterniond q =
-        Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
-      const Eigen::Quaterniond q_new = q * dq;
-      x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
-    }
+    applyErrorState(dx);
 
     P_ = (EigenMatrix9d::Identity() - K * H) * P_;
     return ObservationUpdateStatus::kUpdated;
@@ -408,23 +448,10 @@ public:
   }
 
 private:
-  double previous_time_imu_;
-  bool has_previous_time_imu_;
-  double var_imu_w_;
-  double var_imu_acc_;
-  double max_prediction_dt_sec_;
-
   static const int num_state_{10};
   static const int num_error_state_{9};
 
   typedef Eigen::Matrix<double, num_error_state_, num_error_state_> EigenMatrix9d;
-
-  Eigen::Matrix<double, num_state_, 1> x_;
-  EigenMatrix9d P_;
-
-  Eigen::Vector3d gravity_{0.0, 0.0, 9.80665};
-
-  double tau_gyro_bias_;
 
   enum STATE
   {
@@ -438,6 +465,46 @@ private:
     DVX  = 3, DVY = 4, DVZ = 5,
     DTHX = 6, DTHY = 7, DTHZ = 8,
   };
+
+  void applyErrorState(const Eigen::Ref<const Eigen::Matrix<double, num_error_state_, 1>> & dx)
+  {
+    // position / velocity
+    x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dx.segment(ERROR_STATE::DX, 3);
+    x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dx.segment(ERROR_STATE::DVX, 3);
+
+    // orientation (small-angle update, right-multiplicative)
+    const Eigen::Vector3d dtheta =
+      Eigen::Vector3d(dx(ERROR_STATE::DTHX), dx(ERROR_STATE::DTHY), dx(ERROR_STATE::DTHZ));
+    const double norm = dtheta.norm();
+    Eigen::Quaterniond dq;
+    if (norm < 1e-12) {
+      dq = Eigen::Quaterniond::Identity();
+    } else {
+      dq = Eigen::Quaterniond(
+        std::cos(norm / 2),
+        std::sin(norm / 2) * dtheta.x() / norm,
+        std::sin(norm / 2) * dtheta.y() / norm,
+        std::sin(norm / 2) * dtheta.z() / norm);
+    }
+
+    Eigen::Quaterniond q(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    q.normalize();
+    const Eigen::Quaterniond q_new = (q * dq).normalized();
+    x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
+  }
+
+  double previous_time_imu_;
+  bool has_previous_time_imu_;
+  double var_imu_w_;
+  double var_imu_acc_;
+  double max_prediction_dt_sec_;
+
+  Eigen::Matrix<double, num_state_, 1> x_;
+  EigenMatrix9d P_;
+
+  Eigen::Vector3d gravity_{0.0, 0.0, 9.80665};
+
+  double tau_gyro_bias_;
 };
 }  // namespace core
 

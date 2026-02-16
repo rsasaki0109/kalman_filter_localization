@@ -79,6 +79,37 @@ TEST(EKFEstimatorCore, ObservationUpdateValidation)
     EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
 }
 
+TEST(EKFEstimatorCore, ObservationUpdateOrientationValidationAndConvergence)
+{
+  EKFEstimator ekf;
+
+  constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
+  const Eigen::Quaterniond q_meas =
+    Eigen::Quaterniond(Eigen::AngleAxisd(10.0 * kDeg2Rad, Eigen::Vector3d::UnitX()));
+  const Eigen::Vector3d var_ok(1e-3, 1e-3, 1e-3);
+
+  Eigen::Vector3d var_bad = var_ok;
+  var_bad.x() = 0.0;
+  EXPECT_EQ(
+    ekf.observationUpdateOrientationWithStatus(q_meas, var_bad),
+    EKFEstimator::ObservationUpdateStatus::kInvalidVariance);
+
+  Eigen::Quaterniond q_bad = q_meas;
+  q_bad.coeffs().setConstant(std::numeric_limits<double>::quiet_NaN());
+  EXPECT_EQ(
+    ekf.observationUpdateOrientationWithStatus(q_bad, var_ok),
+    EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
+
+  EXPECT_EQ(
+    ekf.observationUpdateOrientationWithStatus(q_meas, var_ok),
+    EKFEstimator::ObservationUpdateStatus::kUpdated);
+
+  const Eigen::Quaterniond q_est = ekf.getOrientation().normalized();
+  const double dot = std::abs(q_est.dot(q_meas.normalized()));
+  const double angle_err = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot)));
+  EXPECT_LT(angle_err, 1e-3);
+}
+
 TEST(EKFEstimatorCore, PredictionUpdateWithStatusTimeBaseAndReset)
 {
   EKFEstimator ekf;

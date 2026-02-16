@@ -11,6 +11,11 @@ ekf_localization:
       # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
       gravity_mps2: 0.0
 
+      # Istanbul IMU topic also provides a high-quality orientation estimate.
+      # Fuse it to stabilize roll/pitch/yaw.
+      use_imu_orientation: true
+      use_imu_orientation_covariance: true
+
       # Tuned starting point (see tools/param_grid_istanbul_quick.json).
       # These values worked well across multiple Istanbul bags when evaluated
       # against INS ground truth.
