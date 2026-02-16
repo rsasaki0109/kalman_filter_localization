@@ -64,9 +64,11 @@ ekf_localization_node
    Compute ATE-like metrics (3D/XY RMSE, P95, bias) from estimated vs ground-truth CSV.
 3. `tools/run_open_data_sweep.py`  
    Run bag playback + EKF parameter grid search and output `summary.csv` (optionally record attitude reference and plot best run).
-4. `tools/navsatfix_to_pose.py`  
+4. `tools/run_istanbul_suite.py`  
+   Convenience wrapper to run the sweep across multiple Autoware Istanbul all-sensors bags and collect best plots/metrics.
+5. `tools/navsatfix_to_pose.py`  
    Convert `/fix (NavSatFix)` to `/gnss_pose (PoseStamped)` for EKF input/evaluation.
-5. `tools/plot_pose_csv.py`  
+6. `tools/plot_pose_csv.py`  
    Plot XY trajectory (START/GOAL markers) and z+RPY time series. Yaw reference uses attitude reference CSV (if provided), otherwise GT quaternion (if available), otherwise course from GT positions.
 
 Example:
@@ -132,6 +134,15 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --ground-truth-topic /gnss_pose \
   --attitude-reference-topic /sensing/imu/imu_data \
   --plot-best
+```
+
+To run the same sweep across multiple Istanbul all-sensors bags and collect best plots:
+
+```bash
+ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_istanbul_suite.py \
+  --output-dir /tmp/kfl_istanbul_suite \
+  --param-grid-json src/kalman_filter_localization/tools/param_grid_istanbul_quick.json \
+  --max-runs 1
 ```
 
 Plot the resulting CSV for a run:
