@@ -506,6 +506,10 @@ def main() -> int:
                 str(gt_csv),
                 "--max-time-gap-sec",
                 f"{args.eval_max_time_gap_sec:.12g}",
+                "--time-normalize",
+                "auto",
+                "--time-align",
+                "auto",
                 "--output-json",
                 str(metrics_json),
             ]
@@ -589,6 +593,12 @@ def main() -> int:
                 str(best_dir),
                 "--prefix",
                 str(best["run_id"]),
+                "--time-normalize",
+                "auto",
+                "--time-align",
+                "auto",
+                "--max-time-gap-sec",
+                f"{args.eval_max_time_gap_sec:.12g}",
             ]
             if (best_dir / "attitude_reference.csv").exists():
                 plot_cmd.extend(
