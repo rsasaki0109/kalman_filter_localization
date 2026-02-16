@@ -222,6 +222,8 @@ def main() -> int:
                     "best_run_id": best.get("run_id", ""),
                     "rmse_3d_m": best.get("rmse_3d_m", ""),
                     "rmse_xy_m": best.get("rmse_xy_m", ""),
+                    "rmse_3d_nobias_m": best.get("rmse_3d_nobias_m", ""),
+                    "rmse_xy_nobias_m": best.get("rmse_xy_nobias_m", ""),
                     "bias_z_m": best.get("bias_z_m", ""),
                     "matched_samples": best.get("matched_samples", ""),
                 }
@@ -239,6 +241,8 @@ def main() -> int:
         "matched_samples",
         "rmse_3d_m",
         "rmse_xy_m",
+        "rmse_3d_nobias_m",
+        "rmse_xy_nobias_m",
         "bias_z_m",
     ]
     with summary_csv.open("w", encoding="utf-8", newline="") as f:
