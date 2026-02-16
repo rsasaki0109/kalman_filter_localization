@@ -192,6 +192,8 @@ python3 src/kalman_filter_localization/tools/plot_pose_csv.py \
   --prefix run_003
 ```
 
+Note: Some open datasets mix timestamp domains (e.g., unix epoch vs GPS time-of-week). The sweep runs evaluation/plots with automatic timestamp normalization and alignment. If you run tools manually, you can also pass `--time-normalize auto --time-align auto`.
+
 To compare attitude against an IMU-or-INS reference, record the IMU orientation as CSV and pass it as `--attitude-reference-csv`:
 
 ```bash
