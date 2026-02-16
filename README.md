@@ -65,6 +65,8 @@ ekf_localization_node
    Run bag playback + EKF parameter grid search and output `summary.csv`.
 4. `tools/navsatfix_to_pose.py`  
    Convert `/fix (NavSatFix)` to `/gnss_pose (PoseStamped)` for EKF input/evaluation.
+5. `tools/plot_pose_csv.py`  
+   Plot XY trajectory (START/GOAL markers) and z+RPY time series. Yaw reference uses GT quaternion if available, otherwise course from GT positions.
 
 Example:
 
@@ -107,6 +109,16 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --play-topics /imu/data_raw /fix \
   --play-rate 20.0 \
   --max-runs 4
+```
+
+Plot the resulting CSV for a run:
+
+```bash
+python3 src/kalman_filter_localization/tools/plot_pose_csv.py \
+  --estimated-csv /tmp/kfl_benchmark_quick/run_003/estimated.csv \
+  --ground-truth-csv /tmp/kfl_benchmark_quick/run_003/ground_truth.csv \
+  --output-dir /tmp/kfl_benchmark_quick/run_003 \
+  --prefix run_003
 ```
 
 ## Dataset Profiles
