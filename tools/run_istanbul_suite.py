@@ -47,7 +47,14 @@ def read_best_row(ranking_csv: Path) -> Optional[Dict[str, str]]:
     return None
 
 
-def copy_best_plots(best_row: Dict[str, str], bag_name: str, bag_out_dir: Path, suite_out_dir: Path) -> None:
+def copy_best_plots(
+    best_row: Dict[str, str],
+    bag_name: str,
+    bag_out_dir: Path,
+    suite_out_dir: Path,
+    *,
+    suffix: str = "",
+) -> None:
     run_id = best_row.get("run_id", "")
     if not run_id:
         return
@@ -60,9 +67,9 @@ def copy_best_plots(best_row: Dict[str, str], bag_name: str, bag_out_dir: Path, 
     dst_dir = suite_out_dir / "best_plots"
     dst_dir.mkdir(parents=True, exist_ok=True)
     if xy.exists():
-        shutil.copyfile(xy, dst_dir / f"{bag_name}_trajectory_xy.png")
+        shutil.copyfile(xy, dst_dir / f"{bag_name}{suffix}_trajectory_xy.png")
     if ts.exists():
-        shutil.copyfile(ts, dst_dir / f"{bag_name}_timeseries_z_rpy.png")
+        shutil.copyfile(ts, dst_dir / f"{bag_name}{suffix}_timeseries_z_rpy.png")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -210,6 +217,7 @@ def main() -> int:
         proc = subprocess.run(cmd, check=False)
 
         best = read_best_row(bag_out_dir / "ranking_by_rmse_3d.csv")
+        best_nobias = read_best_row(bag_out_dir / "ranking_by_rmse_3d_nobias.csv")
         row: Dict[str, str] = {
             "bag": bag_name,
             "bag_path": str(bag_path),
@@ -229,6 +237,19 @@ def main() -> int:
                 }
             )
             copy_best_plots(best, bag_name, bag_out_dir, suite_out)
+        if best_nobias:
+            row.update(
+                {
+                    "best_nobias_run_id": best_nobias.get("run_id", ""),
+                    "best_nobias_matched_samples": best_nobias.get("matched_samples", ""),
+                    "best_nobias_rmse_3d_m": best_nobias.get("rmse_3d_m", ""),
+                    "best_nobias_rmse_xy_m": best_nobias.get("rmse_xy_m", ""),
+                    "best_nobias_rmse_3d_nobias_m": best_nobias.get("rmse_3d_nobias_m", ""),
+                    "best_nobias_rmse_xy_nobias_m": best_nobias.get("rmse_xy_nobias_m", ""),
+                    "best_nobias_bias_z_m": best_nobias.get("bias_z_m", ""),
+                }
+            )
+            copy_best_plots(best_nobias, bag_name, bag_out_dir, suite_out, suffix="_nobias")
         summary_rows.append(row)
 
     summary_csv = suite_out / f"istanbul_suite_summary_{stamp}.csv"
@@ -244,6 +265,13 @@ def main() -> int:
         "rmse_3d_nobias_m",
         "rmse_xy_nobias_m",
         "bias_z_m",
+        "best_nobias_run_id",
+        "best_nobias_matched_samples",
+        "best_nobias_rmse_3d_m",
+        "best_nobias_rmse_xy_m",
+        "best_nobias_rmse_3d_nobias_m",
+        "best_nobias_rmse_xy_nobias_m",
+        "best_nobias_bias_z_m",
     ]
     with summary_csv.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
