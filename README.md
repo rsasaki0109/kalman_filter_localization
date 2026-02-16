@@ -45,6 +45,7 @@ ekf_localization_node
 |---|---|---|---|
 |pub_period|int|10|publish period[ms]|
 |max_imu_dt_sec|double|0.5|maximum IMU dt accepted by prediction update [s]|
+|gravity_mps2|double|9.80665|gravity magnitude subtracted from IMU acceleration in +Z [m/s^2] (set 0.0 if IMU acceleration is gravity-compensated)|
 |var_gnss_xy|double|0.1|variance of a gnss receiver about position xy[m^2]|
 |var_gnss_z|double|0.15|variance of a gnss receiver about position z[m^2]|
 |var_odom_xyz|double|0.2|variance of an odometry[m^2]|
