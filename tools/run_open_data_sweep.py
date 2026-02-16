@@ -146,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--initial-pose", default="0,0,0,0,0,0,1")
     p.add_argument("--publish-initial-pose", action="store_true", default=True)
     p.add_argument("--no-publish-initial-pose", action="store_false", dest="publish_initial_pose")
+    p.add_argument(
+        "--initial-pose-wait-subscriptions",
+        type=int,
+        default=1,
+        help="ros2 topic pub wait_maching_subscriptions value for initial pose (default: 1)",
+    )
 
     p.add_argument("--reference-frame-id", default="map")
     p.add_argument("--robot-frame-id", default="base_link")
@@ -388,7 +394,7 @@ def main() -> int:
                     "pub",
                     "--once",
                     "--wait-matching-subscriptions",
-                    "0",
+                    str(args.initial_pose_wait_subscriptions),
                     args.initial_pose_topic,
                     "geometry_msgs/msg/PoseStamped",
                     pose_yaml,
