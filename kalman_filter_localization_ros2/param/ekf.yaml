@@ -13,6 +13,11 @@ ekf_localization:
       var_imu_orientation_rpy: 0.01
       use_flat_ground: false
       var_flat_ground_rp: 0.03
+      use_gnss_course_yaw: false
+      var_gnss_course_yaw: 0.05
+      min_gnss_course_distance_m: 1.0
+      min_gnss_course_speed_mps: 0.5
+      max_gnss_course_dt_sec: 1.0
       max_imu_dt_sec: 0.5
       gravity_mps2: 9.80665
       var_gnss_xy: 0.1

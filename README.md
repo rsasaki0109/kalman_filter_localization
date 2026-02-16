@@ -56,6 +56,11 @@ ekf_localization_node
 |var_imu_orientation_rpy|double|0.01|fallback variance for IMU orientation observation [rad^2] (used when covariance is invalid)|
 |use_flat_ground|bool|false|whether to apply a flat-ground pseudo-observation (keeps roll/pitch near 0 when no attitude measurement is available)|
 |var_flat_ground_rp|double|0.03|variance for flat-ground roll/pitch pseudo-observation [rad^2]|
+|use_gnss_course_yaw|bool|false|whether to fuse yaw from GNSS course (computed from consecutive GNSS positions)|
+|var_gnss_course_yaw|double|0.05|variance for GNSS course yaw pseudo-observation [rad^2]|
+|min_gnss_course_distance_m|double|1.0|minimum GNSS displacement used to compute course yaw [m]|
+|min_gnss_course_speed_mps|double|0.5|minimum speed used to accept GNSS course yaw [m/s]|
+|max_gnss_course_dt_sec|double|1.0|maximum GNSS dt used for course yaw computation [s]|
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
 |output_stamp_source|string|latest_input|timestamp source for `current_pose.header.stamp` (`latest_input`, `imu`, `ros_time`)|
@@ -256,6 +261,7 @@ Tuned profile files are available under `kalman_filter_localization_ros2/param/p
   - Key values:
     - `gravity_mps2: 0.0`
     - `use_flat_ground: true` (softly keeps roll/pitch near 0)
+    - `use_gnss_course_yaw: true` (stabilizes yaw from GNSS course when moving)
 
 Example launch with this profile and IMU frame override:
 

@@ -63,6 +63,19 @@ namespace kalman_filter_localization
 
 namespace
 {
+constexpr double kPi = 3.14159265358979323846;
+
+double wrapToPi(double angle_rad)
+{
+  while (angle_rad > kPi) {
+    angle_rad -= 2.0 * kPi;
+  }
+  while (angle_rad < -kPi) {
+    angle_rad += 2.0 * kPi;
+  }
+  return angle_rad;
+}
+
 double getYawRadFromQuaternion(const Eigen::Quaterniond & q_in)
 {
   const Eigen::Quaterniond q = q_in.normalized();
@@ -113,6 +126,16 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("use_flat_ground", use_flat_ground_);
     node_.declare_parameter("var_flat_ground_rp", 0.03);
     node_.get_parameter("var_flat_ground_rp", var_flat_ground_rp_);
+    node_.declare_parameter("use_gnss_course_yaw", false);
+    node_.get_parameter("use_gnss_course_yaw", use_gnss_course_yaw_);
+    node_.declare_parameter("var_gnss_course_yaw", 0.05);
+    node_.get_parameter("var_gnss_course_yaw", var_gnss_course_yaw_);
+    node_.declare_parameter("min_gnss_course_distance_m", 1.0);
+    node_.get_parameter("min_gnss_course_distance_m", min_gnss_course_distance_m_);
+    node_.declare_parameter("min_gnss_course_speed_mps", 0.5);
+    node_.get_parameter("min_gnss_course_speed_mps", min_gnss_course_speed_mps_);
+    node_.declare_parameter("max_gnss_course_dt_sec", 1.0);
+    node_.get_parameter("max_gnss_course_dt_sec", max_gnss_course_dt_sec_);
     node_.declare_parameter("max_imu_dt_sec", 0.5);
     node_.get_parameter("max_imu_dt_sec", max_imu_dt_sec_);
     node_.declare_parameter("gravity_mps2", 9.80665);
@@ -145,6 +168,36 @@ struct EkfLocalizationComponent::Impl
         node_.get_logger(),
         "both use_imu_orientation and use_flat_ground are true. "
         "use_flat_ground will be ignored.");
+    }
+    if (use_gnss_course_yaw_) {
+      if (!(max_gnss_course_dt_sec_ > 0.0) || !std::isfinite(max_gnss_course_dt_sec_)) {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid parameter max_gnss_course_dt_sec=%f. fallback to 1.0",
+          max_gnss_course_dt_sec_);
+        max_gnss_course_dt_sec_ = 1.0;
+      }
+      if (!(min_gnss_course_distance_m_ >= 0.0) || !std::isfinite(min_gnss_course_distance_m_)) {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid parameter min_gnss_course_distance_m=%f. fallback to 1.0",
+          min_gnss_course_distance_m_);
+        min_gnss_course_distance_m_ = 1.0;
+      }
+      if (!(min_gnss_course_speed_mps_ >= 0.0) || !std::isfinite(min_gnss_course_speed_mps_)) {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid parameter min_gnss_course_speed_mps=%f. fallback to 0.5",
+          min_gnss_course_speed_mps_);
+        min_gnss_course_speed_mps_ = 0.5;
+      }
+      if (!(var_gnss_course_yaw_ > 0.0) || !std::isfinite(var_gnss_course_yaw_)) {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid parameter var_gnss_course_yaw=%f. fallback to 0.05",
+          var_gnss_course_yaw_);
+        var_gnss_course_yaw_ = 0.05;
+      }
     }
 
     ekf_.setVarImuGyro(var_imu_w_);
@@ -303,6 +356,9 @@ struct EkfLocalizationComponent::Impl
       {
         if (initial_pose_received_ && use_gnss_) {
           measurementUpdate(*msg, var_gnss_);
+          if (use_gnss_course_yaw_) {
+            updateYawFromGnssCourse(*msg);
+          }
         }
       };
 
@@ -441,6 +497,60 @@ struct EkfLocalizationComponent::Impl
     }
   }
 
+  void updateYawFromGnssCourse(const geometry_msgs::msg::PoseStamped & pose_msg)
+  {
+    const double t = pose_msg.header.stamp.sec + pose_msg.header.stamp.nanosec * 1e-9;
+    const double x = pose_msg.pose.position.x;
+    const double y = pose_msg.pose.position.y;
+
+    if (!has_course_base_gnss_) {
+      course_base_gnss_time_ = t;
+      course_base_gnss_x_ = x;
+      course_base_gnss_y_ = y;
+      has_course_base_gnss_ = true;
+      return;
+    }
+
+    const double dt = t - course_base_gnss_time_;
+    if (!(dt > 0.0) || dt > max_gnss_course_dt_sec_) {
+      // Reset if time is invalid or too old.
+      course_base_gnss_time_ = t;
+      course_base_gnss_x_ = x;
+      course_base_gnss_y_ = y;
+      return;
+    }
+
+    const double dx = x - course_base_gnss_x_;
+    const double dy = y - course_base_gnss_y_;
+    const double dist = std::hypot(dx, dy);
+    if (dist < min_gnss_course_distance_m_) {
+      // Accumulate until we have enough displacement.
+      return;
+    }
+
+    const double speed = dist / dt;
+    if (speed < min_gnss_course_speed_mps_) {
+      return;
+    }
+
+    const double yaw_meas = std::atan2(dy, dx);
+    const Eigen::Quaterniond q_est = ekf_.getOrientation().normalized();
+    const double yaw_est = getYawRadFromQuaternion(q_est);
+    const double dyaw = wrapToPi(yaw_meas - yaw_est);
+
+    // Apply yaw rotation in the world frame (left multiplication). This yields the correct
+    // body-frame innovation when the EKF uses right-multiplicative error state updates.
+    const Eigen::Quaterniond dq_world_yaw(Eigen::AngleAxisd(dyaw, Eigen::Vector3d::UnitZ()));
+    const Eigen::Quaterniond q_meas = (dq_world_yaw * q_est).normalized();
+    const Eigen::Vector3d var_rpy_rad2(1.0e6, 1.0e6, var_gnss_course_yaw_);
+    (void)ekf_.observationUpdateOrientationWithStatus(q_meas, var_rpy_rad2);
+
+    // Update the base point after applying the measurement.
+    course_base_gnss_time_ = t;
+    course_base_gnss_x_ = x;
+    course_base_gnss_y_ = y;
+  }
+
   void broadcastPose()
   {
     if (!initial_pose_received_ || !has_received_input_) {
@@ -485,6 +595,11 @@ struct EkfLocalizationComponent::Impl
   double var_imu_orientation_rpy_{0.0};
   bool use_flat_ground_{false};
   double var_flat_ground_rp_{0.0};
+  bool use_gnss_course_yaw_{false};
+  double var_gnss_course_yaw_{0.0};
+  double min_gnss_course_distance_m_{0.0};
+  double min_gnss_course_speed_mps_{0.0};
+  double max_gnss_course_dt_sec_{0.0};
   double max_imu_dt_sec_{0.0};
   double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};
@@ -507,6 +622,12 @@ struct EkfLocalizationComponent::Impl
   // IMU time base (kept in ROS2 layer so the core EKF can operate on dt only).
   double previous_time_imu_{0.0};
   bool has_previous_time_imu_{false};
+
+  // GNSS base point for course/heading estimation.
+  bool has_course_base_gnss_{false};
+  double course_base_gnss_time_{0.0};
+  double course_base_gnss_x_{0.0};
+  double course_base_gnss_y_{0.0};
 
   core::EKFEstimator ekf_;
 
