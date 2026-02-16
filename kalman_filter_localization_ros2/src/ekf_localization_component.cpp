@@ -40,6 +40,7 @@
 #include <tf2_ros/transform_listener.h>
 
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -59,6 +60,17 @@
 
 namespace kalman_filter_localization
 {
+
+namespace
+{
+double getYawRadFromQuaternion(const Eigen::Quaterniond & q_in)
+{
+  const Eigen::Quaterniond q = q_in.normalized();
+  const double siny_cosp = 2.0 * (q.w() * q.z() + q.x() * q.y());
+  const double cosy_cosp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
+  return std::atan2(siny_cosp, cosy_cosp);
+}
+}  // namespace
 
 struct EkfLocalizationComponent::Impl
 {
@@ -97,6 +109,10 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("use_imu_orientation_covariance", use_imu_orientation_covariance_);
     node_.declare_parameter("var_imu_orientation_rpy", 0.01);
     node_.get_parameter("var_imu_orientation_rpy", var_imu_orientation_rpy_);
+    node_.declare_parameter("use_flat_ground", false);
+    node_.get_parameter("use_flat_ground", use_flat_ground_);
+    node_.declare_parameter("var_flat_ground_rp", 0.03);
+    node_.get_parameter("var_flat_ground_rp", var_flat_ground_rp_);
     node_.declare_parameter("max_imu_dt_sec", 0.5);
     node_.get_parameter("max_imu_dt_sec", max_imu_dt_sec_);
     node_.declare_parameter("gravity_mps2", 9.80665);
@@ -123,6 +139,12 @@ struct EkfLocalizationComponent::Impl
         "invalid parameter output_stamp_source='%s'. fallback to default='latest_input'",
         output_stamp_source_.c_str());
       output_stamp_source_ = "latest_input";
+    }
+    if (use_imu_orientation_ && use_flat_ground_) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "both use_imu_orientation and use_flat_ground are true. "
+        "use_flat_ground will be ignored.");
     }
 
     ekf_.setVarImuGyro(var_imu_w_);
@@ -377,6 +399,19 @@ struct EkfLocalizationComponent::Impl
           node_.get_logger(), clock_, 5000,
           "skip EKF orientation update due to invalid orientation variance");
       }
+    } else if (use_flat_ground_) {
+      // Pseudo-observation: ground vehicles typically have small roll/pitch. This helps prevent
+      // attitude drift when roll/pitch are weakly observable (e.g. gravity-compensated accel).
+      const Eigen::Quaterniond q_est = ekf_.getOrientation().normalized();
+      const double yaw_rad = getYawRadFromQuaternion(q_est);
+      const Eigen::Quaterniond q_level(Eigen::AngleAxisd(yaw_rad, Eigen::Vector3d::UnitZ()));
+      const Eigen::Vector3d var_rpy_rad2(var_flat_ground_rp_, var_flat_ground_rp_, 1.0e6);
+      const auto obs_status = ekf_.observationUpdateOrientationWithStatus(q_level, var_rpy_rad2);
+      if (obs_status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+        RCLCPP_WARN_THROTTLE(
+          node_.get_logger(), clock_, 5000,
+          "skip EKF flat-ground update due to invalid variance (need finite positive)");
+      }
     }
   }
 
@@ -448,6 +483,8 @@ struct EkfLocalizationComponent::Impl
   bool use_imu_orientation_{false};
   bool use_imu_orientation_covariance_{true};
   double var_imu_orientation_rpy_{0.0};
+  bool use_flat_ground_{false};
+  double var_flat_ground_rp_{0.0};
   double max_imu_dt_sec_{0.0};
   double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};
