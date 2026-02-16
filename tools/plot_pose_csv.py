@@ -308,6 +308,7 @@ def plot_timeseries_z_rpy(
     out_path: Path,
     title: str,
     yaw_reference: str,
+    rpy_reference: str,
     max_time_gap_sec: float,
 ) -> None:
     if not est or not gt:
@@ -341,14 +342,17 @@ def plot_timeseries_z_rpy(
     rpy_ref_quat: Optional[Sequence[PoseSample]] = None
     rpy_ref_t: List[float] = []
     rpy_ref_label = ""
-    if has_att_quat:
-        rpy_ref_quat = attitude_ref
-        rpy_ref_t = ref_t
-        rpy_ref_label = "REF(attitude_csv)"
-    elif has_gt_quat:
+    if rpy_reference == "auto":
+        # Prefer GT quaternion when available (true attitude).
+        rpy_reference = "gt_quat" if has_gt_quat else ("attitude_csv" if has_att_quat else "gt_quat")
+    if rpy_reference == "gt_quat" and has_gt_quat:
         rpy_ref_quat = gt
         rpy_ref_t = gt_t
         rpy_ref_label = "GT"
+    elif rpy_reference == "attitude_csv" and has_att_quat:
+        rpy_ref_quat = attitude_ref
+        rpy_ref_t = ref_t
+        rpy_ref_label = "REF(attitude_csv)"
 
     rpy_ref_r_d: List[float] = []
     rpy_ref_p_d: List[float] = []
@@ -554,7 +558,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--yaw-reference",
         choices=["auto", "gt_quat", "gt_course", "attitude_csv"],
         default="auto",
-        help="reference yaw source. auto prefers attitude_csv, then gt_quat, otherwise gt_course",
+        help="reference yaw source. auto prefers gt_quat (if available), then attitude_csv, otherwise gt_course",
+    )
+    p.add_argument(
+        "--rpy-reference",
+        choices=["auto", "gt_quat", "attitude_csv"],
+        default="auto",
+        help="reference source for roll/pitch display. auto prefers gt_quat (if available), otherwise attitude_csv",
     )
     return p
 
@@ -636,12 +646,19 @@ def main() -> int:
     gt = best_gt
     attitude_ref = best_att
 
+    has_att_quat = attitude_ref is not None and not gt_quat_is_identity(attitude_ref)
+    has_gt_quat = not gt_quat_is_identity(gt)
+
     yaw_reference = args.yaw_reference
     if yaw_reference == "auto":
-        if attitude_ref is not None and not gt_quat_is_identity(attitude_ref):
+        # Prefer GT quaternion when available (true attitude), otherwise fall back
+        # to recorded attitude reference, otherwise use course from GT positions.
+        if has_gt_quat:
+            yaw_reference = "gt_quat"
+        elif has_att_quat:
             yaw_reference = "attitude_csv"
         else:
-            yaw_reference = "gt_course" if gt_quat_is_identity(gt) else "gt_quat"
+            yaw_reference = "gt_course"
 
     xy_path = args.output_dir / f"{args.prefix}_trajectory_xy.png"
     ts_path = args.output_dir / f"{args.prefix}_timeseries_z_rpy.png"
@@ -659,6 +676,7 @@ def main() -> int:
         out_path=ts_path,
         title=f"Time Series z+RPY ({args.prefix})",
         yaw_reference=yaw_reference,
+        rpy_reference=args.rpy_reference,
         max_time_gap_sec=args.max_time_gap_sec,
     )
 

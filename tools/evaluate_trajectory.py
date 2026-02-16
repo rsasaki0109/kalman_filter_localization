@@ -576,7 +576,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--yaw-reference",
         choices=["auto", "gt_quat", "gt_course", "attitude_csv"],
         default="auto",
-        help="reference yaw source for attitude metrics. auto prefers attitude_csv, then gt_quat, otherwise gt_course",
+        help="reference yaw source for attitude metrics. auto prefers gt_quat (if available), then attitude_csv, otherwise gt_course",
     )
     p.add_argument("--output-json", type=Path, default=None)
     return p
@@ -729,10 +729,14 @@ def main() -> int:
         has_gt_quat = not quat_sequence_is_identity(gt_aligned)
         yaw_reference = args.yaw_reference
         if yaw_reference == "auto":
-            if has_att_quat:
+            # Prefer GT quaternion when available (true attitude), otherwise fall back to
+            # recorded attitude reference, otherwise use GT course.
+            if has_gt_quat:
+                yaw_reference = "gt_quat"
+            elif has_att_quat:
                 yaw_reference = "attitude_csv"
             else:
-                yaw_reference = "gt_quat" if has_gt_quat else "gt_course"
+                yaw_reference = "gt_course"
         if yaw_reference == "attitude_csv" and not has_att_quat:
             yaw_reference = "gt_quat" if has_gt_quat else "gt_course"
         if yaw_reference == "gt_quat" and not has_gt_quat:
