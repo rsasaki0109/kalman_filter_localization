@@ -116,6 +116,7 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --play-rate 20.0 \
   --estimated-qos-depth 100 \
   --ground-truth-qos-depth 100 \
+  --initial-pose-wait-subscriptions 1 \
   --max-runs 4
 ```
 
