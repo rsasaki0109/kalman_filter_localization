@@ -77,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--play-rate", type=float, default=20.0)
     p.add_argument("--max-runs", type=int, default=0, help="0 means all combinations")
     p.add_argument(
+        "--ground-truth",
+        choices=["gnss_pose", "ins_pose"],
+        default="gnss_pose",
+        help="ground truth topic to evaluate against (default: gnss_pose)",
+    )
+    p.add_argument(
         "--bags",
         nargs="*",
         default=[f"all-sensors-bag{i}_compressed" for i in range(1, 7)],
@@ -85,6 +91,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-dir", type=Path, default=Path("data/istanbul"))
     p.add_argument("--estimated-qos-depth", type=int, default=10)
     p.add_argument("--ground-truth-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--ekf-output-stamp-source",
+        choices=["latest_input", "imu", "ros_time"],
+        default="latest_input",
+        help="forwarded to tools/run_open_data_sweep.py",
+    )
+    p.add_argument(
+        "--eval-max-time-gap-sec",
+        type=float,
+        default=0.1,
+        help="forwarded to tools/run_open_data_sweep.py",
+    )
+    p.add_argument(
+        "--no-attitude-reference",
+        action="store_true",
+        help="do not record IMU attitude reference CSV (plots will use GT quaternion if available)",
+    )
     return p
 
 
@@ -121,6 +144,10 @@ def main() -> int:
             continue
 
         bag_out_dir = suite_out / f"{bag_name}_{stamp}"
+        play_topics = ["/sensing/imu/imu_data", "/gnss/fix"]
+        ground_truth_topic = "/gnss_pose" if args.ground_truth == "gnss_pose" else "/ins_pose"
+        if args.ground_truth == "ins_pose":
+            play_topics.append("/lvx_client/gsof/ins_solution_49")
         cmd = [
             sys.executable,
             str(SWEEP_SCRIPT),
@@ -135,27 +162,44 @@ def main() -> int:
             "--gnss-topic",
             "/gnss_pose",
             "--ground-truth-topic",
-            "/gnss_pose",
+            ground_truth_topic,
             "--estimated-qos-depth",
             str(args.estimated_qos_depth),
             "--ground-truth-qos-depth",
             str(args.ground_truth_qos_depth),
             "--play-topics",
-            "/sensing/imu/imu_data",
-            "/gnss/fix",
+            *play_topics,
             "--enable-navsatfix-to-pose",
             "--navsatfix-input-topic",
             "/gnss/fix",
             "--navsatfix-output-topic",
             "/gnss_pose",
-            "--attitude-reference-topic",
-            "/sensing/imu/imu_data",
-            "--attitude-reference-msg-type",
-            "imu",
+            "--ekf-output-stamp-source",
+            args.ekf_output_stamp_source,
             "--plot-best",
+            "--eval-max-time-gap-sec",
+            f"{args.eval_max_time_gap_sec:.12g}",
             "--play-rate",
             f"{args.play_rate:.12g}",
         ]
+        if args.ground_truth == "ins_pose":
+            # Applanix INS reference in Istanbul bags:
+            # /lvx_client/gsof/ins_solution_49 (applanix_msgs/msg/NavigationSolutionGsof49)
+            cmd += [
+                "--enable-applanix-to-pose",
+                "--applanix-input-topic",
+                "/lvx_client/gsof/ins_solution_49",
+                "--applanix-output-topic",
+                "/ins_pose",
+            ]
+
+        if not args.no_attitude_reference:
+            cmd += [
+                "--attitude-reference-topic",
+                "/sensing/imu/imu_data",
+                "--attitude-reference-msg-type",
+                "imu",
+            ]
         if args.max_runs > 0:
             cmd += ["--max-runs", str(args.max_runs)]
 
@@ -209,4 +253,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
