@@ -203,6 +203,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--applanix-input-topic", default="/lvx_client/gsof/ins_solution_49")
     p.add_argument("--applanix-output-topic", default="/ins_pose")
     p.add_argument("--applanix-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--applanix-origin-navsatfix-topic",
+        default=None,
+        help=(
+            "optional NavSatFix topic used by tools/applanix_nav_solution_to_pose.py to set a shared ENU origin. "
+            "Useful for INS ground truth evaluation to reduce frame offset vs GNSS-origin estimates."
+        ),
+    )
+    p.add_argument("--applanix-origin-navsatfix-qos-depth", type=int, default=10)
 
     p.add_argument("--play-rate", type=float, default=1.0)
     p.add_argument(
@@ -340,6 +349,13 @@ def main() -> int:
                     "--qos-depth",
                     str(args.applanix_qos_depth),
                 ]
+                if args.applanix_origin_navsatfix_topic:
+                    apx_cmd += [
+                        "--origin-navsatfix-topic",
+                        args.applanix_origin_navsatfix_topic,
+                        "--origin-navsatfix-qos-depth",
+                        str(args.applanix_origin_navsatfix_qos_depth),
+                    ]
                 processes.append(
                     start_background_process(
                         "applanix_to_pose", apx_cmd, run_dir / "applanix_to_pose.log"

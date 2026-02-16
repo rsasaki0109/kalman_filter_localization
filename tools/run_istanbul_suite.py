@@ -191,6 +191,9 @@ def main() -> int:
                 "/lvx_client/gsof/ins_solution_49",
                 "--applanix-output-topic",
                 "/ins_pose",
+                # Align INS pose origin to GNSS origin to reduce a constant frame offset.
+                "--applanix-origin-navsatfix-topic",
+                "/gnss/fix",
             ]
 
         if not args.no_attitude_reference:
