@@ -27,6 +27,7 @@ from typing import Dict, List, Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SWEEP_SCRIPT = SCRIPT_DIR / "run_open_data_sweep.py"
+REPORT_NAME_PREFIX = "open_data_suite_report"
 
 
 def default_ws_root() -> Path:
@@ -149,6 +150,37 @@ def build_parser() -> argparse.ArgumentParser:
         default="ros",
         help="forwarded to tools/run_open_data_sweep.py --applanix-orientation-mode (INS pose orientation conversion)",
     )
+    p.add_argument(
+        "--enable-applanix-to-imu",
+        action="store_true",
+        default=False,
+        help=(
+            "start tools/gsof49_to_imu.py during each run (to convert GSOF49 INS -> Imu). "
+            "When --ground-truth is ins_pose, this is enabled automatically."
+        ),
+    )
+    p.add_argument(
+        "--applanix-imu-input-topic",
+        default="/lvx_client/gsof/ins_solution_49",
+        help="forwarded to tools/run_open_data_sweep.py --applanix-imu-input-topic",
+    )
+    p.add_argument(
+        "--applanix-imu-output-topic",
+        default="/ins_imu",
+        help="forwarded to tools/run_open_data_sweep.py --applanix-imu-output-topic",
+    )
+    p.add_argument(
+        "--applanix-imu-output-frame-id",
+        default="base_link",
+        help="forwarded to tools/run_open_data_sweep.py --applanix-imu-output-frame-id",
+    )
+    p.add_argument("--applanix-imu-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--applanix-imu-output-mode",
+        choices=["identity", "raw_rpy", "ros"],
+        default="ros",
+        help="forwarded to tools/run_open_data_sweep.py --applanix-imu-output-mode",
+    )
     return p
 
 
@@ -159,7 +191,7 @@ def write_html_report(
     summary_csv: Path,
     summary_rows: List[Dict[str, str]],
 ) -> Path:
-    report_path = suite_out / f"istanbul_suite_report_{stamp}.html"
+    report_path = suite_out / f"{REPORT_NAME_PREFIX}_{stamp}.html"
 
     def img_tag(rel_src: str, alt: str) -> str:
         src = html.escape(rel_src)
@@ -262,11 +294,11 @@ def write_html_report(
             "<head>",
             "<meta charset=\"utf-8\" />",
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
-            f"<title>istanbul_suite_report_{html.escape(stamp)}</title>",
+            f"<title>{REPORT_NAME_PREFIX}_{html.escape(stamp)}</title>",
             f"<style>{css}</style>",
             "</head>",
             "<body>",
-            f"<h1>Istanbul Suite Report ({html.escape(stamp)})</h1>",
+            f"<h1>Open-Data Suite Report ({html.escape(stamp)})</h1>",
             f"<p class=\"sub\">summary_csv: <code>{summary_rel}</code></p>",
             *cards,
             "</body>",
@@ -327,8 +359,6 @@ def main() -> int:
             str(args.param_grid_json),
             "--output-dir",
             str(bag_out_dir),
-            "--imu-topic",
-            "/sensing/imu/imu_data",
             "--gnss-topic",
             "/gnss_pose",
             "--ground-truth-topic",
@@ -353,6 +383,8 @@ def main() -> int:
             f"{args.attitude_min_speed_mps:.12g}",
             "--play-rate",
             f"{args.play_rate:.12g}",
+            "--imu-topic",
+            "/ins_imu" if args.ground_truth == "ins_pose" else "/sensing/imu/imu_data",
         ]
         if initial_yaw_source_topic:
             cmd += [
@@ -381,10 +413,25 @@ def main() -> int:
                 "/gnss/fix",
             ]
 
+        if args.ground_truth == "ins_pose" or args.enable_applanix_to_imu:
+            cmd += [
+                "--enable-applanix-to-imu",
+                "--applanix-imu-input-topic",
+                args.applanix_imu_input_topic,
+                "--applanix-imu-output-topic",
+                args.applanix_imu_output_topic,
+                "--applanix-imu-output-frame-id",
+                args.applanix_imu_output_frame_id,
+                "--applanix-imu-qos-depth",
+                str(args.applanix_imu_qos_depth),
+                "--applanix-imu-output-mode",
+                args.applanix_imu_output_mode,
+            ]
+
         if not args.no_attitude_reference:
             cmd += [
                 "--attitude-reference-topic",
-                "/sensing/imu/imu_data",
+                "/ins_imu" if args.ground_truth == "ins_pose" else "/sensing/imu/imu_data",
                 "--attitude-reference-msg-type",
                 "imu",
             ]
