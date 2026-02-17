@@ -164,7 +164,9 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --max-runs 4
 ```
 
-If you also want plots for the best run and an attitude reference, set `--attitude-reference-topic` and `--plot-best`:
+If you also want plots for the best run(s) and an attitude reference, set `--attitude-reference-topic` and `--plot-best`.
+
+Note: `--plot-best` will plot the best run by `rmse_3d_m`, and (if different) the best run by `rmse_3d_nobias_m`.
 
 ```bash
 python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
