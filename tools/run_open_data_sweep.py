@@ -360,13 +360,18 @@ def write_html_report(
             f"ranking_csv: <a href=\"{ranking_rel}\"><code>{ranking_rel}</code></a><br/>"
             f"ranking_nobias_csv: <a href=\"{ranking_nb_rel}\"><code>{ranking_nb_rel}</code></a>"
             "</p>",
+            "<p class=\"sub\">"
+            "<b>Legend:</b> "
+            "left panel = best by <code>rmse_3d_m</code> (absolute RMSE, bias included), "
+            "right panel = best by <code>rmse_3d_nobias_m</code> (bias removed before RMSE)."
+            "</p>",
             "<div class=\"grid\">",
             "<div class=\"panel\">",
-            "<h2>Best (rmse_3d_m)</h2>",
+            "<h2>Left: Best (rmse_3d_m)</h2>",
             best_html,
             "</div>",
             "<div class=\"panel\">",
-            "<h2>Best (rmse_3d_nobias_m)</h2>",
+            "<h2>Right: Best (rmse_3d_nobias_m)</h2>",
             best_nb_html,
             "</div>",
             "</div>",
