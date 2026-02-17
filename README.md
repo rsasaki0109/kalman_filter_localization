@@ -94,6 +94,8 @@ Outputs:
 - `/tmp/kfl_benchmark/ranking_by_rmse_3d_nobias.csv`: successful runs sorted by `rmse_3d_nobias_m` (RMSE after subtracting mean XYZ bias)
 - `/tmp/kfl_benchmark/run_xxx/`: per-run logs, CSV, and metrics JSON
 
+Note: When an attitude reference CSV is recorded (or GT has a valid quaternion), the sweep also writes optional attitude metrics to CSV/JSON (e.g., `yaw_reference`, `yaw_rmse_deg`, `roll_rmse_deg`, `pitch_rmse_deg`, `attitude_angle_rmse_deg`).
+
 For open data that has `/fix` (NavSatFix) instead of `/gnss_pose`, either run the converter first or let the sweep start it automatically with `--enable-navsatfix-to-pose`.
 
 ```bash

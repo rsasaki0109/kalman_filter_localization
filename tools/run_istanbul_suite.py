@@ -234,6 +234,11 @@ def main() -> int:
                     "rmse_xy_nobias_m": best.get("rmse_xy_nobias_m", ""),
                     "bias_z_m": best.get("bias_z_m", ""),
                     "matched_samples": best.get("matched_samples", ""),
+                    "yaw_reference": best.get("yaw_reference", ""),
+                    "yaw_rmse_deg": best.get("yaw_rmse_deg", ""),
+                    "roll_rmse_deg": best.get("roll_rmse_deg", ""),
+                    "pitch_rmse_deg": best.get("pitch_rmse_deg", ""),
+                    "attitude_angle_rmse_deg": best.get("attitude_angle_rmse_deg", ""),
                 }
             )
             copy_best_plots(best, bag_name, bag_out_dir, suite_out)
@@ -247,6 +252,13 @@ def main() -> int:
                     "best_nobias_rmse_3d_nobias_m": best_nobias.get("rmse_3d_nobias_m", ""),
                     "best_nobias_rmse_xy_nobias_m": best_nobias.get("rmse_xy_nobias_m", ""),
                     "best_nobias_bias_z_m": best_nobias.get("bias_z_m", ""),
+                    "best_nobias_yaw_reference": best_nobias.get("yaw_reference", ""),
+                    "best_nobias_yaw_rmse_deg": best_nobias.get("yaw_rmse_deg", ""),
+                    "best_nobias_roll_rmse_deg": best_nobias.get("roll_rmse_deg", ""),
+                    "best_nobias_pitch_rmse_deg": best_nobias.get("pitch_rmse_deg", ""),
+                    "best_nobias_attitude_angle_rmse_deg": best_nobias.get(
+                        "attitude_angle_rmse_deg", ""
+                    ),
                 }
             )
             copy_best_plots(best_nobias, bag_name, bag_out_dir, suite_out, suffix="_nobias")
@@ -265,6 +277,11 @@ def main() -> int:
         "rmse_3d_nobias_m",
         "rmse_xy_nobias_m",
         "bias_z_m",
+        "yaw_reference",
+        "yaw_rmse_deg",
+        "roll_rmse_deg",
+        "pitch_rmse_deg",
+        "attitude_angle_rmse_deg",
         "best_nobias_run_id",
         "best_nobias_matched_samples",
         "best_nobias_rmse_3d_m",
@@ -272,6 +289,11 @@ def main() -> int:
         "best_nobias_rmse_3d_nobias_m",
         "best_nobias_rmse_xy_nobias_m",
         "best_nobias_bias_z_m",
+        "best_nobias_yaw_reference",
+        "best_nobias_yaw_rmse_deg",
+        "best_nobias_roll_rmse_deg",
+        "best_nobias_pitch_rmse_deg",
+        "best_nobias_attitude_angle_rmse_deg",
     ]
     with summary_csv.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
