@@ -28,6 +28,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
+from sensor_msgs.msg import NavSatFix
 
 try:
     from applanix_msgs.msg import NavigationSolutionGsof49
@@ -141,19 +142,50 @@ class ApplanixNavSolutionToPose(Node):
         output_frame_id: str,
         qos_depth: int,
         orientation_mode: str,
+        origin_navsatfix_topic: str | None,
+        origin_navsatfix_qos_depth: int,
     ) -> None:
         super().__init__("applanix_nav_solution_to_pose")
         self._origin: Origin | None = None
+        self._use_navsatfix_origin = bool(origin_navsatfix_topic)
         qos = QoSProfile(depth=qos_depth)
         self._pub = self.create_publisher(PoseStamped, output_topic, qos)
         self._sub = self.create_subscription(
             NavigationSolutionGsof49, input_topic, self._callback, qos
         )
+        self._origin_sub = None
+        if origin_navsatfix_topic:
+            qos_origin = QoSProfile(depth=origin_navsatfix_qos_depth)
+            self._origin_sub = self.create_subscription(
+                NavSatFix,
+                origin_navsatfix_topic,
+                self._origin_navsatfix_callback,
+                qos_origin,
+            )
         self._output_frame_id = output_frame_id
         self._orientation_mode = orientation_mode
+
+        origin_source = "ins_solution_49"
+        if origin_navsatfix_topic:
+            origin_source = f"navsatfix:{origin_navsatfix_topic}"
         self.get_logger().info(
             f"convert NavigationSolutionGsof49 '{input_topic}' -> PoseStamped '{output_topic}' "
-            f"frame={output_frame_id} orientation_mode={orientation_mode}"
+            f"frame={output_frame_id} orientation_mode={orientation_mode} origin_source={origin_source}"
+        )
+
+    def _origin_navsatfix_callback(self, msg: NavSatFix) -> None:
+        if self._origin is not None:
+            return
+        if not (
+            math.isfinite(msg.latitude) and math.isfinite(msg.longitude) and math.isfinite(msg.altitude)
+        ):
+            return
+        lat_rad = math.radians(float(msg.latitude))
+        lon_rad = math.radians(float(msg.longitude))
+        alt_m = float(msg.altitude)
+        self._origin = Origin(lat_rad=lat_rad, lon_rad=lon_rad, alt_m=alt_m)
+        self.get_logger().info(
+            f"origin set from NavSatFix lat={msg.latitude:.8f} lon={msg.longitude:.8f} alt={alt_m:.3f}"
         )
 
     def _callback(self, msg: NavigationSolutionGsof49) -> None:
@@ -161,6 +193,10 @@ class ApplanixNavSolutionToPose(Node):
         lon_deg = float(msg.lla.longitude)
         alt_m = float(msg.lla.altitude)
         if not (math.isfinite(lat_deg) and math.isfinite(lon_deg) and math.isfinite(alt_m)):
+            return
+
+        if self._origin is None and self._use_navsatfix_origin:
+            # Wait for origin from NavSatFix to keep the same ENU origin as GNSS-based estimates.
             return
 
         lat_rad = math.radians(lat_deg)
@@ -219,6 +255,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-frame-id", default="map")
     p.add_argument("--qos-depth", type=int, default=10)
     p.add_argument(
+        "--origin-navsatfix-topic",
+        default=None,
+        help=(
+            "optional NavSatFix topic used to set a shared ENU origin (lat/lon/alt). "
+            "Useful when evaluating GNSS-based estimates against INS ground truth."
+        ),
+    )
+    p.add_argument("--origin-navsatfix-qos-depth", type=int, default=10)
+    p.add_argument(
         "--orientation-mode",
         choices=["identity", "raw_rpy", "ros"],
         default="ros",
@@ -251,6 +296,8 @@ def main() -> int:
         output_frame_id=args.output_frame_id,
         qos_depth=args.qos_depth,
         orientation_mode=args.orientation_mode,
+        origin_navsatfix_topic=args.origin_navsatfix_topic,
+        origin_navsatfix_qos_depth=args.origin_navsatfix_qos_depth,
     )
     try:
         rclpy.spin(node)

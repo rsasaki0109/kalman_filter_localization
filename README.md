@@ -117,6 +117,8 @@ source install/setup.bash
 
 Then run the sweep with `--enable-applanix-to-pose` and set `--ground-truth-topic /ins_pose`:
 
+Note: When your estimate uses a GNSS-origin frame (via `navsatfix_to_pose.py`), using INS as ground truth can introduce a constant offset if each converter picks its own origin at a different time. For Istanbul bags, passing `--applanix-origin-navsatfix-topic /gnss/fix` aligns INS to the GNSS origin.
+
 ```bash
 ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --bag-path data/istanbul/all-sensors-bag1_compressed \
@@ -132,6 +134,7 @@ ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_open
   --enable-applanix-to-pose \
   --applanix-input-topic /lvx_client/gsof/ins_solution_49 \
   --applanix-output-topic /ins_pose \
+  --applanix-origin-navsatfix-topic /gnss/fix \
   --attitude-reference-topic /sensing/imu/imu_data \
   --attitude-reference-msg-type imu \
   --plot-best \
