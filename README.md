@@ -114,6 +114,8 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --navsatfix-input-topic /fix \
   --navsatfix-output-topic /gnss_pose \
   --play-rate 20.0 \
+  --estimated-qos-depth 100 \
+  --ground-truth-qos-depth 100 \
   --max-runs 4
 ```
 
