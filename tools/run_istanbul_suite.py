@@ -349,6 +349,9 @@ def main() -> int:
         initial_yaw_source_topic = args.initial_yaw_source_topic
         if initial_yaw_source_topic is None and args.ground_truth == "ins_pose":
             initial_yaw_source_topic = ground_truth_topic
+        use_ins_imu_topic = bool(args.ground_truth == "ins_pose" or args.enable_applanix_to_imu)
+        imu_topic = args.applanix_imu_output_topic if use_ins_imu_topic else "/sensing/imu/imu_data"
+        attitude_ref_topic = imu_topic if use_ins_imu_topic else "/sensing/imu/imu_data"
 
         cmd = [
             sys.executable,
@@ -384,7 +387,7 @@ def main() -> int:
             "--play-rate",
             f"{args.play_rate:.12g}",
             "--imu-topic",
-            "/ins_imu" if args.ground_truth == "ins_pose" else "/sensing/imu/imu_data",
+            imu_topic,
         ]
         if initial_yaw_source_topic:
             cmd += [
@@ -431,7 +434,7 @@ def main() -> int:
         if not args.no_attitude_reference:
             cmd += [
                 "--attitude-reference-topic",
-                "/ins_imu" if args.ground_truth == "ins_pose" else "/sensing/imu/imu_data",
+                attitude_ref_topic,
                 "--attitude-reference-msg-type",
                 "imu",
             ]
