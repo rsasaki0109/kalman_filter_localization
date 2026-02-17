@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
+import html
 import itertools
 import json
 import os
@@ -14,7 +16,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -117,6 +119,172 @@ def write_summary_csv(path: Path, rows: List[Dict[str, object]], fieldnames: Lis
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
+
+
+def write_html_report(
+    *,
+    output_dir: Path,
+    stamp: str,
+    bag_path: Path,
+    param_grid_json: Path,
+    summary_csv: Path,
+    ranking_csv: Path,
+    ranking_nobias_csv: Path,
+    best: Optional[Dict[str, object]],
+    best_nobias: Optional[Dict[str, object]],
+    keys: Sequence[str],
+    successful_sorted: Sequence[Dict[str, object]],
+    successful_nobias_sorted: Sequence[Dict[str, object]],
+) -> Path:
+    report_path = output_dir / f"open_data_sweep_report_{stamp}.html"
+
+    def esc(s: object) -> str:
+        return html.escape("" if s is None else str(s))
+
+    def rel(p: Path) -> str:
+        try:
+            return str(p.relative_to(output_dir))
+        except Exception:  # pylint: disable=broad-except
+            return str(p)
+
+    def img_section(run_id: str) -> str:
+        run_dir = output_dir / run_id
+        xy = run_dir / f"{run_id}_trajectory_xy.png"
+        ts = run_dir / f"{run_id}_timeseries_z_rpy.png"
+
+        def img_or_missing(p: Path, alt: str) -> str:
+            if p.exists():
+                return f'<img src="{esc(rel(p))}" alt="{esc(alt)}" loading="lazy" />'
+            return '<div class="missing">(missing)</div>'
+
+        return "\n".join(
+            [
+                '<div class="imgs">',
+                img_or_missing(xy, f"{run_id} trajectory XY"),
+                img_or_missing(ts, f"{run_id} timeseries z+RPY"),
+                "</div>",
+            ]
+        )
+
+    def kv_run(row: Dict[str, object]) -> str:
+        run_id = str(row.get("run_id", ""))
+        parts = [
+            f"<div><b>run_id</b>: <code>{esc(run_id)}</code></div>",
+            f"<div><b>rmse_3d_m</b>: <code>{esc(row.get('rmse_3d_m',''))}</code></div>",
+            f"<div><b>rmse_3d_nobias_m</b>: <code>{esc(row.get('rmse_3d_nobias_m',''))}</code></div>",
+            f"<div><b>matched</b>: <code>{esc(row.get('matched_samples',''))}</code></div>",
+            f"<div><b>yaw_ref</b>: <code>{esc(row.get('yaw_reference',''))}</code></div>",
+            f"<div><b>yaw_rmse_deg</b>: <code>{esc(row.get('yaw_rmse_deg',''))}</code></div>",
+            f"<div><b>att_angle_rmse_deg</b>: <code>{esc(row.get('attitude_angle_rmse_deg',''))}</code></div>",
+        ]
+        params = {k: row.get(k, "") for k in keys}
+        parts.append(f"<div><b>params</b>: <code>{esc(params)}</code></div>")
+        return "\n".join(parts) + ("\n" + img_section(run_id) if run_id else "")
+
+    def top_table(rows: Sequence[Dict[str, object]], title: str) -> str:
+        head = (
+            "<tr>"
+            "<th>rank</th>"
+            "<th>run_id</th>"
+            "<th>rmse_3d_m</th>"
+            "<th>rmse_3d_nobias_m</th>"
+            "<th>matched</th>"
+            "<th>yaw_rmse_deg</th>"
+            "</tr>"
+        )
+        body_rows: List[str] = []
+        for i, r in enumerate(rows[:10], start=1):
+            body_rows.append(
+                "<tr>"
+                f"<td>{i}</td>"
+                f"<td><code>{esc(r.get('run_id',''))}</code></td>"
+                f"<td><code>{esc(r.get('rmse_3d_m',''))}</code></td>"
+                f"<td><code>{esc(r.get('rmse_3d_nobias_m',''))}</code></td>"
+                f"<td><code>{esc(r.get('matched_samples',''))}</code></td>"
+                f"<td><code>{esc(r.get('yaw_rmse_deg',''))}</code></td>"
+                "</tr>"
+            )
+        body = "\n".join(body_rows) if body_rows else '<tr><td colspan="6">(empty)</td></tr>'
+        return "\n".join(
+            [
+                f"<h3>{esc(title)}</h3>",
+                '<table class="top">',
+                "<thead>",
+                head,
+                "</thead>",
+                "<tbody>",
+                body,
+                "</tbody>",
+                "</table>",
+            ]
+        )
+
+    css = """
+    :root { color-scheme: light; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 8px 0; }
+    .sub { color: #333; margin: 0 0 18px 0; }
+    code { background: #f3f3f3; padding: 2px 6px; border-radius: 6px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .panel { border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }
+    .imgs { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
+    img { width: 100%; height: auto; border: 1px solid #eee; border-radius: 10px; }
+    .missing { color: #888; font-style: italic; padding: 12px; border: 1px dashed #ccc; border-radius: 10px; }
+    table.top { border-collapse: collapse; width: 100%; }
+    table.top th, table.top td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+    table.top th { background: #fafafa; }
+    a { color: #0645ad; }
+    """
+
+    summary_rel = esc(rel(summary_csv))
+    ranking_rel = esc(rel(ranking_csv))
+    ranking_nb_rel = esc(rel(ranking_nobias_csv))
+
+    best_html = "<div class=\"missing\">(no successful runs)</div>"
+    if best is not None:
+        best_html = kv_run(best)
+    best_nb_html = "<div class=\"missing\">(no successful runs)</div>"
+    if best_nobias is not None:
+        best_nb_html = kv_run(best_nobias)
+
+    doc = "\n".join(
+        [
+            "<!doctype html>",
+            "<html>",
+            "<head>",
+            "<meta charset=\"utf-8\" />",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+            f"<title>open_data_sweep_report_{esc(stamp)}</title>",
+            f"<style>{css}</style>",
+            "</head>",
+            "<body>",
+            f"<h1>Open-Data Sweep Report ({esc(stamp)})</h1>",
+            "<p class=\"sub\">"
+            f"bag_path: <code>{esc(bag_path)}</code><br/>"
+            f"param_grid_json: <code>{esc(param_grid_json)}</code><br/>"
+            f"summary_csv: <a href=\"{summary_rel}\"><code>{summary_rel}</code></a><br/>"
+            f"ranking_csv: <a href=\"{ranking_rel}\"><code>{ranking_rel}</code></a><br/>"
+            f"ranking_nobias_csv: <a href=\"{ranking_nb_rel}\"><code>{ranking_nb_rel}</code></a>"
+            "</p>",
+            "<div class=\"grid\">",
+            "<div class=\"panel\">",
+            "<h2>Best (rmse_3d_m)</h2>",
+            best_html,
+            "</div>",
+            "<div class=\"panel\">",
+            "<h2>Best (rmse_3d_nobias_m)</h2>",
+            best_nb_html,
+            "</div>",
+            "</div>",
+            top_table(successful_sorted, "Top 10 by rmse_3d_m"),
+            top_table(successful_nobias_sorted, "Top 10 by rmse_3d_nobias_m"),
+            "</body>",
+            "</html>",
+        ]
+    )
+    report_path.write_text(doc, encoding="utf-8")
+    return report_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -633,6 +801,11 @@ def main() -> int:
         ]
         write_summary_csv(summary_path, rows, fieldnames)
 
+    successful_sorted: List[Dict[str, object]] = []
+    successful_nobias_sorted: List[Dict[str, object]] = []
+    best: Optional[Dict[str, object]] = None
+    best_nobias: Optional[Dict[str, object]] = None
+
     successful = [
         r for r in rows if r["status"] == "ok" and isinstance(r.get("rmse_3d_m"), (int, float))
     ]
@@ -678,7 +851,9 @@ def main() -> int:
             if r["status"] == "ok"
             and isinstance(r.get("rmse_3d_nobias_m"), (int, float))
         ]
-        successful_nobias_sorted = sorted(successful_nobias, key=lambda r: float(r["rmse_3d_nobias_m"]))
+        successful_nobias_sorted = sorted(
+            successful_nobias, key=lambda r: float(r["rmse_3d_nobias_m"])
+        )
         if successful_nobias_sorted:
             write_summary_csv(ranking_nobias_path, successful_nobias_sorted, fieldnames)
 
@@ -753,6 +928,22 @@ def main() -> int:
         print(f"ranking_csv: {ranking_path}")
     if ranking_nobias_path.exists():
         print(f"ranking_nobias_csv: {ranking_nobias_path}")
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = write_html_report(
+        output_dir=args.output_dir,
+        stamp=stamp,
+        bag_path=args.bag_path,
+        param_grid_json=args.param_grid_json,
+        summary_csv=summary_path,
+        ranking_csv=ranking_path,
+        ranking_nobias_csv=ranking_nobias_path,
+        best=best,
+        best_nobias=best_nobias,
+        keys=keys,
+        successful_sorted=successful_sorted,
+        successful_nobias_sorted=successful_nobias_sorted,
+    )
+    print(f"report_html: {report_path}")
     return 0
 
 
