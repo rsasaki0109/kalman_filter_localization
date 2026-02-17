@@ -26,6 +26,8 @@ EVAL_SCRIPT = SCRIPT_DIR / "evaluate_trajectory.py"
 NAVSATFIX_SCRIPT = SCRIPT_DIR / "navsatfix_to_pose.py"
 PLOT_SCRIPT = SCRIPT_DIR / "plot_pose_csv.py"
 APPLANIX_SCRIPT = SCRIPT_DIR / "applanix_nav_solution_to_pose.py"
+GSOF49_TO_IMU_SCRIPT = SCRIPT_DIR / "gsof49_to_imu.py"
+REPORT_NAME_PREFIX = "open_data_report"
 
 
 @dataclass
@@ -225,7 +227,7 @@ def write_html_report(
     successful_sorted: Sequence[Dict[str, object]],
     successful_nobias_sorted: Sequence[Dict[str, object]],
 ) -> Path:
-    report_path = output_dir / f"open_data_sweep_report_{stamp}.html"
+    report_path = output_dir / f"{REPORT_NAME_PREFIX}_{stamp}.html"
 
     def esc(s: object) -> str:
         return html.escape("" if s is None else str(s))
@@ -346,11 +348,11 @@ def write_html_report(
             "<head>",
             "<meta charset=\"utf-8\" />",
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
-            f"<title>open_data_sweep_report_{esc(stamp)}</title>",
+            f"<title>{REPORT_NAME_PREFIX}_{esc(stamp)}</title>",
             f"<style>{css}</style>",
             "</head>",
             "<body>",
-            f"<h1>Open-Data Sweep Report ({esc(stamp)})</h1>",
+            f"<h1>Open-Data Report ({esc(stamp)})</h1>",
             "<p class=\"sub\">"
             f"bag_path: <code>{esc(bag_path)}</code><br/>"
             f"param_grid_json: <code>{esc(param_grid_json)}</code><br/>"
@@ -409,7 +411,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--initial-yaw-source-topic",
         default=None,
-        help="optional topic to derive initial yaw from (e.g. /ins_pose)",
+        help=(
+            "optional topic to derive initial yaw from (e.g. /ins_pose). "
+            "If omitted and ground truth is /ins_pose, defaults to /ins_pose."
+        ),
     )
     p.add_argument(
         "--initial-yaw-source-msg-type",
@@ -495,6 +500,36 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("--applanix-origin-navsatfix-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--enable-applanix-to-imu",
+        action="store_true",
+        default=False,
+        help=(
+            "start tools/gsof49_to_imu.py during each run (to convert GSOF49 INS -> Imu for EKF input)"
+        ),
+    )
+    p.add_argument(
+        "--applanix-imu-input-topic",
+        default="/lvx_client/gsof/ins_solution_49",
+        help="input topic for gsof49_to_imu.py",
+    )
+    p.add_argument(
+        "--applanix-imu-output-topic",
+        default="/ins_imu",
+        help="output topic for gsof49_to_imu.py",
+    )
+    p.add_argument(
+        "--applanix-imu-output-frame-id",
+        default="base_link",
+        help="output_frame_id for gsof49_to_imu.py",
+    )
+    p.add_argument("--applanix-imu-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--applanix-imu-output-mode",
+        choices=["identity", "raw_rpy", "ros"],
+        default="ros",
+        help="output-mode for gsof49_to_imu.py",
+    )
 
     p.add_argument("--play-rate", type=float, default=1.0)
     p.add_argument(
@@ -548,6 +583,9 @@ def main() -> int:
     if args.enable_applanix_to_pose and not APPLANIX_SCRIPT.exists():
         print("ERROR: tools/applanix_nav_solution_to_pose.py is missing", file=sys.stderr)
         return 2
+    if args.enable_applanix_to_imu and not GSOF49_TO_IMU_SCRIPT.exists():
+        print("ERROR: tools/gsof49_to_imu.py is missing", file=sys.stderr)
+        return 2
     if args.play_rate <= 0.0:
         print("ERROR: --play-rate must be > 0", file=sys.stderr)
         return 2
@@ -565,6 +603,8 @@ def main() -> int:
 
     if args.max_runs > 0:
         combinations = combinations[: args.max_runs]
+    if args.initial_yaw_source_topic is None and args.ground_truth_topic == "/ins_pose":
+        args.initial_yaw_source_topic = "/ins_pose"
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = args.output_dir / "summary.csv"
@@ -662,6 +702,25 @@ def main() -> int:
                     start_background_process(
                         "applanix_to_pose", apx_cmd, run_dir / "applanix_to_pose.log"
                     )
+                )
+
+            if args.enable_applanix_to_imu:
+                imu_cmd = [
+                    sys.executable,
+                    str(GSOF49_TO_IMU_SCRIPT),
+                    "--input-topic",
+                    args.applanix_imu_input_topic,
+                    "--output-topic",
+                    args.applanix_imu_output_topic,
+                    "--output-frame-id",
+                    args.applanix_imu_output_frame_id,
+                    "--qos-depth",
+                    str(args.applanix_imu_qos_depth),
+                    "--output-mode",
+                    str(args.applanix_imu_output_mode),
+                ]
+                processes.append(
+                    start_background_process("gsof49_to_imu", imu_cmd, run_dir / "gsof49_to_imu.log")
                 )
 
             ekf_cmd: List[str] = [
