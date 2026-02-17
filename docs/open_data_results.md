@@ -5,27 +5,27 @@
 Results here are generated from `run_open_data_sweep.py`/suite runs and stored in this repository so they can be referenced from docs without re-running.
 
 - Snapshot date: 2026-02-18
-- Run source: `/tmp/kfl_istanbul_suite_course_yaw/...` and `/tmp/kfl_flat_ground_suite_20260217/...`
-  - (updated: `.../kfl_istanbul_suite_course_yaw_speedgated/...` also available in current artifacts)
+- Run source: `/tmp/kfl_istanbul_bag1_rerun_20260218/...`
 
 ### Course-yaw tuning case (GNSS course yaw enabled)
 
 | Metric | Value |
 | --- | --- |
-| RMSE 3D [m] | 0.06345 |
-| RMSE XY [m] | 0.03654 |
-| RMSE 3D (no bias) [m] | 0.05886 |
-| Bias Z [m] | -0.00077 |
-| Attitude angle RMSE [deg] | 2.86 |
-| Roll RMSE [deg] | 0.20 |
-| Pitch RMSE [deg] | 2.76 |
-| Yaw RMSE [deg] | 0.73 |
-| Best run id | `run_001` |
+| RMSE 3D [m] | 0.03423 |
+| RMSE XY [m] | 0.03312 |
+| RMSE 3D (no bias) [m] | 0.03262 |
+| Bias Z [m] | 0.00149 |
+| Attitude angle RMSE [deg] | 0.00870 |
+| Roll RMSE [deg] | 0.00561 |
+| Pitch RMSE [deg] | 0.00649 |
+| Yaw RMSE [deg] | 0.00131 |
+| Best run id | `rerun_006` |
 | Reference | `gt_quat` |
 
-**Best parameters (run_001)**  
-`use_flat_ground = true`, `use_imu_orientation = false`, `use_gnss_course_yaw = true`,  
-`var_gnss_course_yaw = 0.05`, `var_gnss_xy = 0.05`, `var_gnss_z = 0.1`, `var_imu_w = 0.005`, `var_imu_acc = 0.01`
+**Best parameters (rerun_006)**  
+`use_imu_orientation = true`, `use_imu_orientation_covariance = true`,  
+`var_imu_orientation_rpy = 0.001`, `var_imu_w = 0.005`, `var_imu_acc = 0.05`,  
+`var_gnss_xy = 0.05`, `var_gnss_z = 0.1`, `max_imu_dt_sec = 1.0`
 
 ![Course-yaw trajectory](results/open_data/istanbul_bag1_course_yaw/trajectory_xy.png)
 
