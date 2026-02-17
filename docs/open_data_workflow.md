@@ -36,7 +36,10 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --bag-path /path/to/open_data_bag \
   --ground-truth-topic /gnss_pose \
   --param-grid-json src/kalman_filter_localization/tools/param_grid_example.json \
-  --output-dir /tmp/kfl_benchmark
+  --output-dir /tmp/kfl_benchmark \
+  --initial-yaw-source-topic /gnss_pose \
+  --initial-yaw-source-msg-type pose_stamped \
+  --initial-yaw-timeout-sec 8.0
 ```
 
 Output files:
@@ -121,7 +124,8 @@ ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_open
 ```bash
 ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_istanbul_suite.py \
   --output-dir /tmp/kfl_istanbul_suite \
-  --param-grid-json src/kalman_filter_localization/tools/param_grid_istanbul_quick.json
+  --param-grid-json src/kalman_filter_localization/tools/param_grid_istanbul_quick.json \
+  --initial-yaw-source-topic /gnss_pose
 ```
 
 ## Timestamp notes
