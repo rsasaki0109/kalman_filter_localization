@@ -230,17 +230,36 @@ def evaluate(
         )
 
     err_norms_sorted = sorted(err_norms)
+    bias_x = statistics.mean(err_x)
+    bias_y = statistics.mean(err_y)
+    bias_z = statistics.mean(err_z)
+
+    # De-biased RMSE is useful when the two trajectories are expressed in frames
+    # that can have a constant offset (e.g. independent ENU origins, antenna/IMU
+    # lever arm). We still report the raw bias separately.
+    sq_err_xy_nobias = 0.0
+    sq_err_xyz_nobias = 0.0
+    for dx, dy, dz in zip(err_x, err_y, err_z):
+        ddx = dx - bias_x
+        ddy = dy - bias_y
+        ddz = dz - bias_z
+        e2_xy = ddx * ddx + ddy * ddy
+        sq_err_xy_nobias += e2_xy
+        sq_err_xyz_nobias += e2_xy + ddz * ddz
+
     metrics: Dict[str, float] = {
         "matched_samples": float(n),
         "rmse_3d_m": math.sqrt(sq_err_xyz / n),
         "rmse_xy_m": math.sqrt(sq_err_xy / n),
+        "rmse_3d_nobias_m": math.sqrt(sq_err_xyz_nobias / n),
+        "rmse_xy_nobias_m": math.sqrt(sq_err_xy_nobias / n),
         "mean_3d_m": statistics.mean(err_norms),
         "median_3d_m": statistics.median(err_norms),
         "p95_3d_m": percentile(err_norms_sorted, 0.95),
         "max_3d_m": max(err_norms),
-        "bias_x_m": statistics.mean(err_x),
-        "bias_y_m": statistics.mean(err_y),
-        "bias_z_m": statistics.mean(err_z),
+        "bias_x_m": bias_x,
+        "bias_y_m": bias_y,
+        "bias_z_m": bias_z,
     }
     return metrics
 
@@ -250,6 +269,8 @@ def format_metrics(metrics: Dict[str, float]) -> str:
         f"matched_samples: {int(metrics['matched_samples'])}",
         f"rmse_3d_m: {metrics['rmse_3d_m']:.6f}",
         f"rmse_xy_m: {metrics['rmse_xy_m']:.6f}",
+        f"rmse_3d_nobias_m: {metrics['rmse_3d_nobias_m']:.6f}",
+        f"rmse_xy_nobias_m: {metrics['rmse_xy_nobias_m']:.6f}",
         f"mean_3d_m: {metrics['mean_3d_m']:.6f}",
         f"median_3d_m: {metrics['median_3d_m']:.6f}",
         f"p95_3d_m: {metrics['p95_3d_m']:.6f}",
