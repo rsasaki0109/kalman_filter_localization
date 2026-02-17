@@ -116,6 +116,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not record IMU attitude reference CSV (plots will use GT quaternion if available)",
     )
+    p.add_argument(
+        "--applanix-orientation-mode",
+        choices=["identity", "raw_rpy", "ros"],
+        default="ros",
+        help="forwarded to tools/run_open_data_sweep.py --applanix-orientation-mode (INS pose orientation conversion)",
+    )
     return p
 
 
@@ -324,6 +330,8 @@ def main() -> int:
                 "/lvx_client/gsof/ins_solution_49",
                 "--applanix-output-topic",
                 "/ins_pose",
+                "--applanix-orientation-mode",
+                args.applanix_orientation_mode,
                 # Align INS pose origin to GNSS origin to reduce a constant frame offset.
                 "--applanix-origin-navsatfix-topic",
                 "/gnss/fix",
