@@ -19,6 +19,10 @@
 7. `tools/plot_pose_csv.py`  
    Plot XY trajectory and `z+RPY` time series.
 
+Representative published results are shown in:
+
+- [Open Data Results](open_data_results.md)
+
 ## Minimal run
 
 ```bash
