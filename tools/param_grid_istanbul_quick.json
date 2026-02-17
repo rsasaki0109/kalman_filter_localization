@@ -2,6 +2,7 @@
   "gravity_mps2": [0.0],
   "use_imu_orientation": [true],
   "use_imu_orientation_covariance": [true],
+  "var_imu_orientation_rpy": [0.001, 0.005, 0.01],
   "var_imu_w": [0.005, 0.02],
   "var_imu_acc": [0.01, 0.05],
   "var_gnss_xy": [0.05, 0.2],

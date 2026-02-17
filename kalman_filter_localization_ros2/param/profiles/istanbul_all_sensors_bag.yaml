@@ -15,6 +15,7 @@ ekf_localization:
       # Fuse it to stabilize roll/pitch/yaw.
       use_imu_orientation: true
       use_imu_orientation_covariance: true
+      var_imu_orientation_rpy: 0.005
 
       # Tuned starting point (see tools/param_grid_istanbul_quick.json).
       # These values worked well across multiple Istanbul bags when evaluated

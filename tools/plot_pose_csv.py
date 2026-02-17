@@ -237,6 +237,7 @@ def plot_xy_trajectory(
     gt: Sequence[PoseSample],
     out_path: Path,
     title: str,
+    title_suffix: Optional[str] = None,
 ) -> None:
     def xs(samples):
         return [s.x for s in samples]
@@ -289,7 +290,10 @@ def plot_xy_trajectory(
     annotate_start_goal(gt_x, gt_y, "#1f77b4", "GT")
     annotate_start_goal(est_x, est_y, "#d62728", "EST")
 
-    plt.title(title)
+    full_title = title
+    if title_suffix:
+        full_title = f"{title}\n{title_suffix}"
+    plt.title(full_title)
     plt.xlabel("x [m]")
     plt.ylabel("y [m]")
     plt.axis("equal")
@@ -311,6 +315,7 @@ def plot_timeseries_z_rpy(
     rpy_reference: str,
     max_time_gap_sec: float,
     attitude_min_speed_mps: float,
+    title_suffix: Optional[str] = None,
 ) -> None:
     if not est or not gt:
         raise RuntimeError("empty CSV")
@@ -519,7 +524,10 @@ def plot_timeseries_z_rpy(
     axes[4].grid(True, linestyle="--", alpha=0.35)
     axes[4].legend(loc="best")
 
-    fig.suptitle(title, fontsize=14)
+    full_title = title
+    if title_suffix:
+        full_title = f"{title}\n{title_suffix}"
+    fig.suptitle(full_title, fontsize=14)
     fig.tight_layout(rect=[0, 0.02, 1, 0.98])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=170)
@@ -539,6 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=Path, default=Path("."))
     p.add_argument("--prefix", default="plot")
     p.add_argument("--min-time-sec", type=float, default=0.0, help="drop samples with t_sec < this")
+    p.add_argument("--title-suffix", default=None, help="optional suffix appended to output titles")
     p.add_argument(
         "--keep-zero-stamp",
         action="store_true",
@@ -694,6 +703,7 @@ def main() -> int:
         gt=gt,
         out_path=xy_path,
         title=f"Trajectory XY ({args.prefix})",
+        title_suffix=args.title_suffix,
     )
     plot_timeseries_z_rpy(
         est=est,
@@ -701,6 +711,7 @@ def main() -> int:
         attitude_ref=attitude_ref,
         out_path=ts_path,
         title=f"Time Series z+RPY ({args.prefix})",
+        title_suffix=args.title_suffix,
         yaw_reference=yaw_reference,
         rpy_reference=args.rpy_reference,
         max_time_gap_sec=args.max_time_gap_sec,
