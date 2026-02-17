@@ -298,14 +298,32 @@ def compute_attitude_metrics(
     *,
     max_time_gap_sec: float,
     yaw_reference: str,
+    attitude_min_speed_mps: float,
 ) -> Dict[str, float]:
     """Compute optional attitude metrics based on EST quaternion and a chosen reference."""
     if not est or not gt:
         return {}
     if max_time_gap_sec <= 0.0 or not math.isfinite(max_time_gap_sec):
         raise ValueError("max_time_gap_sec must be finite and > 0.0")
+    if attitude_min_speed_mps < 0.0 or not math.isfinite(attitude_min_speed_mps):
+        raise ValueError("attitude_min_speed_mps must be finite and >= 0.0")
 
     out: Dict[str, float] = {}
+
+    gt_times = [s.t_sec for s in gt]
+
+    def gt_speed_xy_mps(t_sec: float) -> Optional[float]:
+        seg = match_segment_at_time(gt, gt_times, t_sec)
+        if seg is None:
+            return None
+        left, right, gap_left, gap_right = seg
+        if min(gap_left, gap_right) > max_time_gap_sec:
+            return None
+        dt = right.t_sec - left.t_sec
+        if dt <= 0.0:
+            return None
+        dist_xy = math.hypot(right.x - left.x, right.y - left.y)
+        return dist_xy / dt
 
     if yaw_reference in ("gt_quat", "attitude_csv"):
         ref = gt if yaw_reference == "gt_quat" else (attitude_ref or [])
@@ -319,6 +337,10 @@ def compute_attitude_metrics(
         err_angle_deg: List[float] = []
 
         for s in est:
+            if attitude_min_speed_mps > 0.0:
+                speed_xy = gt_speed_xy_mps(s.t_sec)
+                if speed_xy is None or speed_xy < attitude_min_speed_mps:
+                    continue
             seg = match_segment_at_time(ref, ref_times, s.t_sec)
             if seg is None:
                 continue
@@ -357,7 +379,6 @@ def compute_attitude_metrics(
         return out
 
     # yaw_reference == "gt_course": course from GT positions
-    gt_times = [s.t_sec for s in gt]
     err_yaw_deg: List[float] = []
     for s in est:
         seg = match_segment_at_time(gt, gt_times, s.t_sec)
@@ -366,8 +387,14 @@ def compute_attitude_metrics(
         left, right, gap_left, gap_right = seg
         if min(gap_left, gap_right) > max_time_gap_sec:
             continue
+        dt = right.t_sec - left.t_sec
+        if dt <= 0.0:
+            continue
         dx = right.x - left.x
         dy = right.y - left.y
+        speed_xy = math.hypot(dx, dy) / dt
+        if attitude_min_speed_mps > 0.0 and speed_xy < attitude_min_speed_mps:
+            continue
         if abs(dx) < 1e-12 and abs(dy) < 1e-12:
             continue
         yaw_ref = math.atan2(dy, dx)
@@ -578,6 +605,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="reference yaw source for attitude metrics. auto prefers gt_quat (if available), then attitude_csv, otherwise gt_course",
     )
+    p.add_argument(
+        "--attitude-min-speed-mps",
+        type=float,
+        default=0.0,
+        help=(
+            "when > 0, compute attitude metrics only when ground-truth horizontal speed >= this threshold. "
+            "Useful since yaw can be unobservable at standstill."
+        ),
+    )
     p.add_argument("--output-json", type=Path, default=None)
     return p
 
@@ -748,6 +784,7 @@ def main() -> int:
             attitude_ref=att_aligned,
             max_time_gap_sec=args.max_time_gap_sec,
             yaw_reference=yaw_reference,
+            attitude_min_speed_mps=args.attitude_min_speed_mps,
         )
         metrics.update(att_metrics)
     except Exception as e:  # pylint: disable=broad-except

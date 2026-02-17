@@ -398,6 +398,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--startup-sec", type=float, default=2.0)
     p.add_argument("--tail-sec", type=float, default=1.0)
     p.add_argument("--eval-max-time-gap-sec", type=float, default=0.1)
+    p.add_argument(
+        "--attitude-min-speed-mps",
+        type=float,
+        default=0.0,
+        help=(
+            "when > 0, compute/plot attitude errors only when ground-truth horizontal speed >= this threshold. "
+            "Useful since yaw can be unobservable at standstill."
+        ),
+    )
     p.add_argument("--max-runs", type=int, default=0, help="0 means all combinations")
     p.add_argument("--run-prefix", default="run")
     p.add_argument(
@@ -735,6 +744,8 @@ def main() -> int:
                 "auto",
                 "--time-align",
                 "auto",
+                "--attitude-min-speed-mps",
+                f"{args.attitude_min_speed_mps:.12g}",
                 "--output-json",
                 str(metrics_json),
             ]
@@ -896,6 +907,8 @@ def main() -> int:
                     str(plot_time_align),
                     "--max-time-gap-sec",
                     f"{args.eval_max_time_gap_sec:.12g}",
+                    "--attitude-min-speed-mps",
+                    f"{args.attitude_min_speed_mps:.12g}",
                 ]
                 if (run_dir / "attitude_reference.csv").exists():
                     plot_cmd.extend(["--attitude-reference-csv", str(run_dir / "attitude_reference.csv")])

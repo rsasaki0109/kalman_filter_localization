@@ -310,11 +310,14 @@ def plot_timeseries_z_rpy(
     yaw_reference: str,
     rpy_reference: str,
     max_time_gap_sec: float,
+    attitude_min_speed_mps: float,
 ) -> None:
     if not est or not gt:
         raise RuntimeError("empty CSV")
     if max_time_gap_sec <= 0.0:
         raise ValueError("--max-time-gap-sec must be > 0")
+    if attitude_min_speed_mps < 0.0 or not math.isfinite(attitude_min_speed_mps):
+        raise ValueError("--attitude-min-speed-mps must be finite and >= 0")
 
     t0 = min(
         est[0].t_sec,
@@ -400,6 +403,20 @@ def plot_timeseries_z_rpy(
         yaw_ref_times = [s.t_sec for s in yaw_ref_quat]
 
     for s, t_rel, yaw_est in zip(est, est_t, est_yaw):
+        if attitude_min_speed_mps > 0.0:
+            seg_speed = match_segment_at_time(gt, gt_times, s.t_sec)
+            if seg_speed is None:
+                continue
+            left_s, right_s, gap_left_s, gap_right_s = seg_speed
+            if min(gap_left_s, gap_right_s) > max_time_gap_sec:
+                continue
+            dt = right_s.t_sec - left_s.t_sec
+            if dt <= 0.0:
+                continue
+            speed_xy = math.hypot(right_s.x - left_s.x, right_s.y - left_s.y) / dt
+            if speed_xy < attitude_min_speed_mps:
+                continue
+
         yaw_ref: Optional[float] = None
 
         if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
@@ -528,6 +545,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="keep samples whose t_sec is exactly 0.0 (default: drop them)",
     )
     p.add_argument("--max-time-gap-sec", type=float, default=0.1, help="time gate for yaw reference/error")
+    p.add_argument(
+        "--attitude-min-speed-mps",
+        type=float,
+        default=0.0,
+        help=(
+            "when > 0, plot attitude errors only when ground-truth horizontal speed >= this threshold. "
+            "Useful since yaw can be unobservable at standstill."
+        ),
+    )
     p.add_argument(
         "--time-normalize",
         choices=["none", "unix_to_gps_tow", "auto"],
@@ -678,6 +704,7 @@ def main() -> int:
         yaw_reference=yaw_reference,
         rpy_reference=args.rpy_reference,
         max_time_gap_sec=args.max_time_gap_sec,
+        attitude_min_speed_mps=args.attitude_min_speed_mps,
     )
 
     print(xy_path)
