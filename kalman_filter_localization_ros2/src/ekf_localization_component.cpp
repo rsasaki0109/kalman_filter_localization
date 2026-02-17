@@ -105,6 +105,19 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("use_gnss", use_gnss_);
     node_.declare_parameter("use_odom", false);
     node_.get_parameter("use_odom", use_odom_);
+    node_.declare_parameter("output_stamp_source", "latest_input");
+    node_.get_parameter("output_stamp_source", output_stamp_source_);
+    if (
+      output_stamp_source_ != "latest_input" &&
+      output_stamp_source_ != "imu" &&
+      output_stamp_source_ != "ros_time")
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter output_stamp_source='%s'. fallback to default='latest_input'",
+        output_stamp_source_.c_str());
+      output_stamp_source_ = "latest_input";
+    }
 
     ekf_.setVarImuGyro(var_imu_w_);
     ekf_.setVarImuAcc(var_imu_acc_);
@@ -269,7 +282,10 @@ struct EkfLocalizationComponent::Impl
 
   void predictUpdate(const sensor_msgs::msg::Imu & imu_msg)
   {
+    has_received_input_ = true;
     current_stamp_ = imu_msg.header.stamp;
+    latest_imu_stamp_ = imu_msg.header.stamp;
+    has_latest_imu_stamp_ = true;
 
     const double current_time_imu = imu_msg.header.stamp.sec +
       imu_msg.header.stamp.nanosec * 1e-9;
@@ -311,6 +327,7 @@ struct EkfLocalizationComponent::Impl
     const geometry_msgs::msg::PoseStamped & pose_msg,
     const Eigen::Vector3d & variance)
   {
+    has_received_input_ = true;
     current_stamp_ = pose_msg.header.stamp;
     const Eigen::Vector3d y = Eigen::Vector3d(
       pose_msg.pose.position.x,
@@ -334,11 +351,20 @@ struct EkfLocalizationComponent::Impl
 
   void broadcastPose()
   {
-    if (!initial_pose_received_) {
+    if (!initial_pose_received_ || !has_received_input_) {
       return;
     }
     const auto pose = ekf_.getPose();
-    current_pose_.header.stamp = current_stamp_;
+    if (output_stamp_source_ == "ros_time") {
+      current_pose_.header.stamp = node_.now();
+    } else if (output_stamp_source_ == "imu") {
+      if (!has_latest_imu_stamp_) {
+        return;
+      }
+      current_pose_.header.stamp = latest_imu_stamp_;
+    } else {
+      current_pose_.header.stamp = current_stamp_;
+    }
     current_pose_.header.frame_id = reference_frame_id_;
     current_pose_.pose.position.x = pose.position.x();
     current_pose_.pose.position.y = pose.position.y();
@@ -371,11 +397,15 @@ struct EkfLocalizationComponent::Impl
   Eigen::Vector3d var_odom_{Eigen::Vector3d::Zero()};
   bool use_gnss_{false};
   bool use_odom_{false};
+  std::string output_stamp_source_{"latest_input"};
 
   bool initial_pose_received_{false};
+  bool has_received_input_{false};
+  bool has_latest_imu_stamp_{false};
 
   geometry_msgs::msg::PoseStamped current_pose_;
   rclcpp::Time current_stamp_;
+  rclcpp::Time latest_imu_stamp_;
 
   // IMU time base (kept in ROS2 layer so the core EKF can operate on dt only).
   double previous_time_imu_{0.0};

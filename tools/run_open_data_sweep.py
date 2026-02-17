@@ -164,6 +164,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-use-gnss", action="store_false", dest="use_gnss")
     p.add_argument("--use-odom", action="store_true", default=False)
     p.add_argument("--no-use-odom", action="store_false", dest="use_odom")
+    p.add_argument(
+        "--ekf-output-stamp-source",
+        choices=["latest_input", "imu", "ros_time"],
+        default="latest_input",
+        help=(
+            "timestamp source for EKF current_pose output. "
+            "latest_input matches the latest received message stamp (default). "
+            "imu uses the latest IMU stamp only. "
+            "ros_time uses the node's ROS time (use_sim_time) clock."
+        ),
+    )
 
     p.add_argument("--enable-static-tf", action="store_true", default=True)
     p.add_argument("--disable-static-tf", action="store_false", dest="enable_static_tf")
@@ -270,6 +281,7 @@ def main() -> int:
         "pub_period": args.pub_period,
         "use_gnss": args.use_gnss,
         "use_odom": args.use_odom,
+        "output_stamp_source": args.ekf_output_stamp_source,
     }
 
     for idx, values in enumerate(combinations, start=1):
@@ -484,6 +496,10 @@ def main() -> int:
                 stop_background_process(p)
 
         metrics: Dict[str, object] = {
+            "time_normalize": "",
+            "time_align": "",
+            "est_time_offset_sec": "",
+            "gt_time_offset_sec": "",
             "matched_samples": "",
             "rmse_3d_m": "",
             "rmse_xy_m": "",
@@ -524,6 +540,10 @@ def main() -> int:
             if eval_result.returncode == 0 and metrics_json.exists():
                 payload = json.loads(metrics_json.read_text(encoding="utf-8"))
                 metrics.update(payload["metrics"])
+                metrics["time_normalize"] = payload.get("time_normalize", "")
+                metrics["time_align"] = payload.get("time_align", "")
+                metrics["est_time_offset_sec"] = payload.get("est_time_offset_sec", "")
+                metrics["gt_time_offset_sec"] = payload.get("gt_time_offset_sec", "")
                 print(f"  rmse_3d_m={float(metrics['rmse_3d_m']):.6f}")
             else:
                 status = f"failed_eval({eval_result.returncode})"
@@ -539,6 +559,10 @@ def main() -> int:
             "run_id",
             "status",
             *keys,
+            "time_normalize",
+            "time_align",
+            "est_time_offset_sec",
+            "gt_time_offset_sec",
             "matched_samples",
             "rmse_3d_m",
             "rmse_xy_m",
@@ -561,6 +585,10 @@ def main() -> int:
             "run_id",
             "status",
             *keys,
+            "time_normalize",
+            "time_align",
+            "est_time_offset_sec",
+            "gt_time_offset_sec",
             "matched_samples",
             "rmse_3d_m",
             "rmse_xy_m",
@@ -582,6 +610,14 @@ def main() -> int:
 
         if args.plot_best and PLOT_SCRIPT.exists():
             best_dir = args.output_dir / str(best["run_id"])
+            plot_time_normalize = "auto"
+            plot_time_align = "auto"
+            try:
+                payload = json.loads((best_dir / "metrics.json").read_text(encoding="utf-8"))
+                plot_time_normalize = payload.get("time_normalize", plot_time_normalize)
+                plot_time_align = payload.get("time_align", plot_time_align)
+            except Exception:  # pylint: disable=broad-except
+                pass
             plot_cmd = [
                 sys.executable,
                 str(PLOT_SCRIPT),
@@ -594,9 +630,9 @@ def main() -> int:
                 "--prefix",
                 str(best["run_id"]),
                 "--time-normalize",
-                "auto",
+                str(plot_time_normalize),
                 "--time-align",
-                "auto",
+                str(plot_time_align),
                 "--max-time-gap-sec",
                 f"{args.eval_max_time_gap_sec:.12g}",
             ]
