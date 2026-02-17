@@ -172,6 +172,37 @@ def read_pose_csv(csv_path: Path, min_time_sec: float) -> List[PoseSample]:
     return rows
 
 
+def _style_axes(
+    ax: plt.Axes, *, ylabel: str, title: str, grid_alpha: float = 0.35
+) -> None:
+    ax.set_title(title, fontsize=11, loc="left")
+    ax.set_ylabel(ylabel)
+    ax.tick_params(labelsize=9)
+    ax.grid(True, linestyle="--", alpha=grid_alpha)
+    ax.minorticks_on()
+    ax.grid(True, which="minor", linestyle=":", alpha=grid_alpha * 0.6)
+
+
+def _set_error_ylim(ax: plt.Axes, values: Sequence[float]) -> None:
+    if not values:
+        return
+    finite_values = [v for v in values if math.isfinite(v)]
+    if not finite_values:
+        return
+    min_v = min(finite_values)
+    max_v = max(finite_values)
+    if min_v == max_v:
+        margin = max(1.0, abs(min_v) * 0.1 + 0.05)
+        ax.set_ylim(min_v - margin, max_v + margin)
+        return
+    span = max_v - min_v
+    margin = max(0.2, span * 0.12)
+    ax.set_ylim(min_v - margin, max_v + margin)
+    max_abs = max(abs(min_v - margin), abs(max_v + margin))
+    if max_abs > 0:
+        ax.set_ylim(-max_abs * 1.02, max_abs * 1.02)
+
+
 def filter_pose_samples(
     samples: Sequence[PoseSample], *, drop_stamp_zero: bool, stamp_zero_abs_tol: float
 ) -> List[PoseSample]:
@@ -463,66 +494,150 @@ def plot_timeseries_z_rpy(
         err_yaw_deg.append(wrap_to_pi(yaw_est - yaw_ref) * 180.0 / math.pi)
         err_t.append(t_rel)
 
-    fig, axes = plt.subplots(5, 1, figsize=(13, 11), sharex=True)
+    fig, axes = plt.subplots(5, 1, figsize=(14, 13), sharex=True)
 
-    axes[0].plot(gt_t, gt_z, color="#1f77b4", linewidth=1.4, label="GT z")
-    axes[0].plot(est_t, est_z, color="#d62728", linewidth=1.0, label="EST z")
-    axes[0].set_ylabel("z [m]")
-    axes[0].grid(True, linestyle="--", alpha=0.35)
-    axes[0].legend(loc="best")
+    axes[0].plot(
+        gt_t,
+        gt_z,
+        color="#1f77b4",
+        linewidth=2.0,
+        alpha=0.95,
+        label="GT z",
+        zorder=2,
+    )
+    axes[0].plot(
+        est_t,
+        est_z,
+        color="#d62728",
+        linewidth=1.7,
+        alpha=0.95,
+        label="EST z",
+        zorder=3,
+    )
+    _style_axes(axes[0], ylabel="z [m]", title="Altitude")
+    axes[0].legend(loc="best", frameon=False)
 
     if rpy_ref_quat is not None:
         axes[1].plot(
             rpy_ref_t,
             rpy_ref_r_d,
             color="#1f77b4",
-            linewidth=1.2,
+            linewidth=2.0,
+            alpha=0.9,
             label=f"{rpy_ref_label} roll",
+            zorder=2,
         )
-    axes[1].plot(est_t, est_r_d, color="#d62728", linewidth=1.0, label="EST roll")
-    axes[1].set_ylabel("roll [deg]")
-    axes[1].grid(True, linestyle="--", alpha=0.35)
-    axes[1].legend(loc="best")
+    axes[1].plot(
+        est_t,
+        est_r_d,
+        color="#d62728",
+        linewidth=1.7,
+        alpha=0.95,
+        label="EST roll",
+        zorder=3,
+    )
+    _style_axes(axes[1], ylabel="roll [deg]", title="Roll")
+    axes[1].legend(loc="best", frameon=False)
 
     if rpy_ref_quat is not None:
         axes[2].plot(
             rpy_ref_t,
             rpy_ref_p_d,
             color="#1f77b4",
-            linewidth=1.2,
+            linewidth=2.0,
+            alpha=0.9,
             label=f"{rpy_ref_label} pitch",
+            zorder=2,
         )
-    axes[2].plot(est_t, est_p_d, color="#d62728", linewidth=1.0, label="EST pitch")
-    axes[2].set_ylabel("pitch [deg]")
-    axes[2].grid(True, linestyle="--", alpha=0.35)
-    axes[2].legend(loc="best")
+    axes[2].plot(
+        est_t,
+        est_p_d,
+        color="#d62728",
+        linewidth=1.7,
+        alpha=0.95,
+        label="EST pitch",
+        zorder=3,
+    )
+    _style_axes(axes[2], ylabel="pitch [deg]", title="Pitch")
+    axes[2].legend(loc="best", frameon=False)
 
-    axes[3].plot(est_t, est_yaw_d, color="#d62728", linewidth=1.0, label="EST yaw")
+    axes[3].plot(
+        est_t,
+        est_yaw_d,
+        color="#d62728",
+        linewidth=1.7,
+        alpha=0.95,
+        label="EST yaw",
+        zorder=3,
+    )
     if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
         axes[3].plot(
             yaw_ref_t,
             yaw_ref_yaw_d,
             color="#1f77b4",
-            linewidth=1.2,
+            linewidth=2.0,
+            alpha=0.9,
             label=f"{yaw_ref_label} yaw",
+            zorder=2,
         )
     else:
-        axes[3].plot(err_t, course_yaw_deg, color="#1f77b4", linewidth=1.2, label="REF yaw (course)")
-    axes[3].set_ylabel("yaw [deg]")
-    axes[3].grid(True, linestyle="--", alpha=0.35)
-    axes[3].legend(loc="best")
+        axes[3].plot(
+            err_t,
+            course_yaw_deg,
+            color="#1f77b4",
+            linewidth=2.0,
+            alpha=0.9,
+            label="REF yaw (course)",
+            zorder=2,
+        )
+    _style_axes(axes[3], ylabel="yaw [deg]", title="Yaw")
+    axes[3].legend(loc="best", frameon=False)
 
     if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
-        axes[4].plot(err_t, err_roll_deg, color="#2ca02c", linewidth=1.0, label="roll error (EST-REF)")
-        axes[4].plot(err_t, err_pitch_deg, color="#ff7f0e", linewidth=1.0, label="pitch error (EST-REF)")
-        axes[4].plot(err_t, err_yaw_deg, color="black", linewidth=1.0, label="yaw error (EST-REF)")
-        axes[4].set_ylabel("angle err [deg]")
+        axes[4].plot(
+            err_t,
+            err_roll_deg,
+            color="#2ca02c",
+            linewidth=1.6,
+            alpha=0.95,
+            label="roll error (EST-REF)",
+            zorder=2,
+        )
+        axes[4].plot(
+            err_t,
+            err_pitch_deg,
+            color="#ff7f0e",
+            linewidth=1.6,
+            alpha=0.95,
+            label="pitch error (EST-REF)",
+            zorder=2,
+        )
+        axes[4].plot(
+            err_t,
+            err_yaw_deg,
+            color="black",
+            linewidth=1.6,
+            alpha=0.95,
+            label="yaw error (EST-REF)",
+            zorder=3,
+        )
+        ylabel = "angle err [deg]"
     else:
-        axes[4].plot(err_t, err_yaw_deg, color="black", linewidth=1.0, label="yaw error (EST-REF)")
-        axes[4].set_ylabel("yaw err [deg]")
+        axes[4].plot(
+            err_t,
+            err_yaw_deg,
+            color="black",
+            linewidth=1.6,
+            alpha=0.95,
+            label="yaw error (EST-REF)",
+            zorder=3,
+        )
+        ylabel = "yaw err [deg]"
+    axes[4].axhline(0.0, color="black", linewidth=1.0, alpha=0.4, linestyle=":")
+    _set_error_ylim(axes[4], err_yaw_deg + err_roll_deg + err_pitch_deg if yaw_reference in ("gt_quat", "attitude_csv") else err_yaw_deg)
+    _style_axes(axes[4], ylabel=ylabel, title="Attitude Errors")
     axes[4].set_xlabel("t [sec] (offset)")
-    axes[4].grid(True, linestyle="--", alpha=0.35)
-    axes[4].legend(loc="best")
+    axes[4].legend(loc="best", frameon=False)
 
     full_title = title
     if title_suffix:
