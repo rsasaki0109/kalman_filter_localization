@@ -232,7 +232,7 @@ def write_html_report(
                     f"<div class=\"meta\"><div><b>output_dir</b>: <code>{out_dir_rel}</code></div></div>",
                     "<div class=\"grid\">",
                     "<div class=\"panel\">",
-                    "<h3>Best (rmse_3d_m)</h3>",
+                    "<h3>Left: Best (rmse_3d_m)</h3>",
                     "<div class=\"kv\">",
                     f"<div><b>run_id</b>: <code>{html.escape(r.get('best_run_id',''))}</code></div>",
                     f"<div><b>matched</b>: <code>{html.escape(r.get('matched_samples',''))}</code></div>",
@@ -248,7 +248,7 @@ def write_html_report(
                     "</div>",
                     "</div>",
                     "<div class=\"panel\">",
-                    "<h3>Best (rmse_3d_nobias_m)</h3>",
+                    "<h3>Right: Best (rmse_3d_nobias_m)</h3>",
                     "<div class=\"kv\">",
                     f"<div><b>run_id</b>: <code>{html.escape(r.get('best_nobias_run_id',''))}</code></div>",
                     f"<div><b>matched</b>: <code>{html.escape(r.get('best_nobias_matched_samples',''))}</code></div>",
@@ -300,6 +300,10 @@ def write_html_report(
             "<body>",
             f"<h1>Open-Data Suite Report ({html.escape(stamp)})</h1>",
             f"<p class=\"sub\">summary_csv: <code>{summary_rel}</code></p>",
+            "<p class=\"sub\"><b>Legend:</b> "
+            "left panel = best by <code>rmse_3d_m</code> (absolute RMSE, bias included), "
+            "right panel = best by <code>rmse_3d_nobias_m</code> (bias removed before RMSE)."
+            "</p>",
             *cards,
             "</body>",
             "</html>",
