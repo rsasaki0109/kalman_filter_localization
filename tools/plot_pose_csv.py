@@ -40,6 +40,68 @@ class PoseSample:
     qw: float
 
 
+UNIX_TO_GPS_EPOCH_OFFSET_SEC = 315964800.0  # 1970-01-01 -> 1980-01-06
+GPS_WEEK_SEC = 604800.0
+
+
+def normalize_unix_to_gps_tow(samples: Sequence[PoseSample], gps_leap_seconds: int) -> List[PoseSample]:
+    """Convert unix epoch stamps to GPS time-of-week (TOW) (heuristically)."""
+    if not samples:
+        return []
+    if not isinstance(gps_leap_seconds, int):
+        raise ValueError("--gps-leap-seconds must be an integer")
+
+    out: List[PoseSample] = []
+    for s in samples:
+        t_sec = s.t_sec
+        if t_sec > 1.0e8:  # unix epoch seconds are ~1e9+
+            t_sec = (t_sec - UNIX_TO_GPS_EPOCH_OFFSET_SEC + float(gps_leap_seconds)) % GPS_WEEK_SEC
+        out.append(
+            PoseSample(
+                t_sec=t_sec,
+                x=s.x,
+                y=s.y,
+                z=s.z,
+                qx=s.qx,
+                qy=s.qy,
+                qz=s.qz,
+                qw=s.qw,
+            )
+        )
+    out.sort(key=lambda v: v.t_sec)
+    return out
+
+
+def apply_time_normalize(
+    samples: Sequence[PoseSample], mode: str, gps_leap_seconds: int
+) -> List[PoseSample]:
+    if mode == "none":
+        return list(samples)
+    if mode == "unix_to_gps_tow":
+        return normalize_unix_to_gps_tow(samples, gps_leap_seconds=gps_leap_seconds)
+    raise ValueError(f"unsupported time normalize mode: {mode}")
+
+
+def shift_time(samples: Sequence[PoseSample], offset_sec: float) -> List[PoseSample]:
+    if not samples:
+        return []
+    if not (math.isfinite(offset_sec) and offset_sec != 0.0):
+        return list(samples)
+    return [
+        PoseSample(
+            t_sec=s.t_sec - offset_sec,
+            x=s.x,
+            y=s.y,
+            z=s.z,
+            qx=s.qx,
+            qy=s.qy,
+            qz=s.qz,
+            qw=s.qw,
+        )
+        for s in samples
+    ]
+
+
 def wrap_to_pi(angle_rad: float) -> float:
     while angle_rad > math.pi:
         angle_rad -= 2.0 * math.pi
@@ -151,6 +213,23 @@ def match_segment_at_time(
     if gap_left < 0.0 or gap_right < 0.0:
         return None
     return left, right, gap_left, gap_right
+
+
+def count_time_matches(
+    est: Sequence[PoseSample], gt: Sequence[PoseSample], max_time_gap_sec: float
+) -> int:
+    if not est or len(gt) < 2:
+        return 0
+    gt_times = [s.t_sec for s in gt]
+    count = 0
+    for s in est:
+        seg = match_segment_at_time(gt, gt_times, s.t_sec)
+        if seg is None:
+            continue
+        _, _, gap_left, gap_right = seg
+        if min(gap_left, gap_right) <= max_time_gap_sec:
+            count += 1
+    return count
 
 
 def plot_xy_trajectory(
@@ -446,6 +525,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-time-gap-sec", type=float, default=0.1, help="time gate for yaw reference/error")
     p.add_argument(
+        "--time-normalize",
+        choices=["none", "unix_to_gps_tow", "auto"],
+        default="none",
+        help=(
+            "optional timestamp normalization. "
+            "'unix_to_gps_tow' converts unix epoch stamps to GPS time-of-week. "
+            "'auto' tries both none/unix_to_gps_tow and selects the best."
+        ),
+    )
+    p.add_argument(
+        "--gps-leap-seconds",
+        type=int,
+        default=18,
+        help="GPS leap seconds used for unix_to_gps_tow conversion (default: 18).",
+    )
+    p.add_argument(
+        "--time-align",
+        choices=["absolute", "relative", "auto"],
+        default="auto",
+        help=(
+            "time alignment mode before matching reference yaw. "
+            "'relative' subtracts each CSV's first timestamp. "
+            "'auto' selects absolute/relative based on which yields more matches."
+        ),
+    )
+    p.add_argument(
         "--yaw-reference",
         choices=["auto", "gt_quat", "gt_course", "attitude_csv"],
         default="auto",
@@ -467,6 +572,69 @@ def main() -> int:
         attitude_ref = filter_pose_samples(
             attitude_ref, drop_stamp_zero=not args.keep_zero_stamp, stamp_zero_abs_tol=1e-12
         )
+
+    time_align_candidates = ["absolute", "relative"] if args.time_align == "auto" else [args.time_align]
+    time_normalize_candidates = (
+        ["none", "unix_to_gps_tow"]
+        if args.time_normalize == "auto"
+        else [args.time_normalize]
+    )
+
+    best_matches = -1
+    used_time_align = "absolute"
+    used_time_normalize = "none"
+    best_est = list(est)
+    best_gt = list(gt)
+    best_att = list(attitude_ref) if attitude_ref is not None else None
+
+    for time_normalize in time_normalize_candidates:
+        est_norm = apply_time_normalize(
+            est, mode=time_normalize, gps_leap_seconds=args.gps_leap_seconds
+        )
+        gt_norm = apply_time_normalize(
+            gt, mode=time_normalize, gps_leap_seconds=args.gps_leap_seconds
+        )
+        att_norm = (
+            apply_time_normalize(attitude_ref, mode=time_normalize, gps_leap_seconds=args.gps_leap_seconds)
+            if attitude_ref is not None
+            else None
+        )
+        for time_align in time_align_candidates:
+            est_aligned = est_norm
+            gt_aligned = gt_norm
+            att_aligned = att_norm
+            if time_align == "relative":
+                if est_norm:
+                    est_aligned = shift_time(est_norm, est_norm[0].t_sec)
+                if gt_norm:
+                    gt_aligned = shift_time(gt_norm, gt_norm[0].t_sec)
+                if att_norm:
+                    att_aligned = shift_time(att_norm, att_norm[0].t_sec)
+
+            matches = count_time_matches(est_aligned, gt_aligned, args.max_time_gap_sec)
+
+            better = False
+            if matches > best_matches:
+                better = True
+            elif matches == best_matches:
+                # Prefer smaller transformations when equivalent.
+                if used_time_align == "relative" and time_align == "absolute":
+                    better = True
+                elif used_time_align == time_align:
+                    if used_time_normalize == "unix_to_gps_tow" and time_normalize == "none":
+                        better = True
+
+            if better:
+                best_matches = matches
+                used_time_align = time_align
+                used_time_normalize = time_normalize
+                best_est = list(est_aligned)
+                best_gt = list(gt_aligned)
+                best_att = list(att_aligned) if att_aligned is not None else None
+
+    est = best_est
+    gt = best_gt
+    attitude_ref = best_att
 
     yaw_reference = args.yaw_reference
     if yaw_reference == "auto":
