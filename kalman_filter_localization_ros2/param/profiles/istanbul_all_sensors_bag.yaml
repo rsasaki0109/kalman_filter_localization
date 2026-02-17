@@ -11,12 +11,14 @@ ekf_localization:
       # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
       gravity_mps2: 0.0
 
-      # Start from defaults; tune with tools/run_open_data_sweep.py as needed.
-      var_imu_w: 0.01
+      # Tuned starting point (see tools/param_grid_istanbul_quick.json).
+      # These values worked well across multiple Istanbul bags when evaluated
+      # against INS ground truth.
+      var_imu_w: 0.005
       var_imu_acc: 0.01
-      max_imu_dt_sec: 0.5
-      var_gnss_xy: 0.1
-      var_gnss_z: 0.15
+      max_imu_dt_sec: 1.0
+      var_gnss_xy: 0.05
+      var_gnss_z: 0.1
       var_odom_xyz: 0.2
 
       use_gnss: true
