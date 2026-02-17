@@ -23,6 +23,7 @@ ekf_localization:
       min_gnss_course_distance_m: 1.0
       min_gnss_course_speed_mps: 0.5
       max_gnss_course_dt_sec: 1.0
+      max_gnss_course_dyaw_rad: 0.6
 
       # Tuned starting point (see tools/param_grid_istanbul_quick.json).
       var_imu_w: 0.005

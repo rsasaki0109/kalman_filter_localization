@@ -136,6 +136,8 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("min_gnss_course_speed_mps", min_gnss_course_speed_mps_);
     node_.declare_parameter("max_gnss_course_dt_sec", 1.0);
     node_.get_parameter("max_gnss_course_dt_sec", max_gnss_course_dt_sec_);
+    node_.declare_parameter("max_gnss_course_dyaw_rad", kPi);
+    node_.get_parameter("max_gnss_course_dyaw_rad", max_gnss_course_dyaw_rad_);
     node_.declare_parameter("max_imu_dt_sec", 0.5);
     node_.get_parameter("max_imu_dt_sec", max_imu_dt_sec_);
     node_.declare_parameter("gravity_mps2", 9.80665);
@@ -197,6 +199,15 @@ struct EkfLocalizationComponent::Impl
           "invalid parameter var_gnss_course_yaw=%f. fallback to 0.05",
           var_gnss_course_yaw_);
         var_gnss_course_yaw_ = 0.05;
+      }
+      if (!(max_gnss_course_dyaw_rad_ > 0.0) || max_gnss_course_dyaw_rad_ > kPi ||
+        !std::isfinite(max_gnss_course_dyaw_rad_))
+      {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid parameter max_gnss_course_dyaw_rad=%f. fallback to M_PI",
+          max_gnss_course_dyaw_rad_);
+        max_gnss_course_dyaw_rad_ = kPi;
       }
     }
 
@@ -537,6 +548,19 @@ struct EkfLocalizationComponent::Impl
     const Eigen::Quaterniond q_est = ekf_.getOrientation().normalized();
     const double yaw_est = getYawRadFromQuaternion(q_est);
     const double dyaw = wrapToPi(yaw_meas - yaw_est);
+    if (std::fabs(dyaw) > max_gnss_course_dyaw_rad_) {
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(),
+        clock_,
+        5000,
+        "skip GNSS course yaw update due to large innovation: |dyaw|=%f [rad] > max=%f [rad]",
+        dyaw,
+        max_gnss_course_dyaw_rad_);
+      course_base_gnss_time_ = t;
+      course_base_gnss_x_ = x;
+      course_base_gnss_y_ = y;
+      return;
+    }
 
     // Apply yaw rotation in the world frame (left multiplication). This yields the correct
     // body-frame innovation when the EKF uses right-multiplicative error state updates.
@@ -600,6 +624,7 @@ struct EkfLocalizationComponent::Impl
   double min_gnss_course_distance_m_{0.0};
   double min_gnss_course_speed_mps_{0.0};
   double max_gnss_course_dt_sec_{0.0};
+  double max_gnss_course_dyaw_rad_{kPi};
   double max_imu_dt_sec_{0.0};
   double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};
