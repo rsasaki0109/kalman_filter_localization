@@ -4,21 +4,22 @@
 
 Results here are generated from `run_open_data_sweep.py`/suite runs and stored in this repository so they can be referenced from docs without re-running.
 
-- Snapshot date: 2026-02-17
+- Snapshot date: 2026-02-18
 - Run source: `/tmp/kfl_istanbul_suite_course_yaw/...` and `/tmp/kfl_flat_ground_suite_20260217/...`
+  - (updated: `.../kfl_istanbul_suite_course_yaw_speedgated/...` also available in current artifacts)
 
 ### Course-yaw tuning case (GNSS course yaw enabled)
 
 | Metric | Value |
 | --- | --- |
-| RMSE 3D [m] | 0.06496 |
-| RMSE XY [m] | 0.03634 |
-| RMSE 3D (no bias) [m] | 0.06136 |
-| Bias Z [m] | -0.00432 |
-| Attitude angle RMSE [deg] | 21.56 |
-| Roll RMSE [deg] | 0.22 |
-| Pitch RMSE [deg] | 2.80 |
-| Yaw RMSE [deg] | 21.38 |
+| RMSE 3D [m] | 0.06345 |
+| RMSE XY [m] | 0.03654 |
+| RMSE 3D (no bias) [m] | 0.05886 |
+| Bias Z [m] | -0.00077 |
+| Attitude angle RMSE [deg] | 2.86 |
+| Roll RMSE [deg] | 0.20 |
+| Pitch RMSE [deg] | 2.76 |
+| Yaw RMSE [deg] | 0.73 |
 | Best run id | `run_001` |
 | Reference | `gt_quat` |
 
