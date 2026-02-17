@@ -72,7 +72,7 @@ ekf_localization_node
 6. `tools/applanix_nav_solution_to_pose.py`  
    Convert Applanix `/lvx_client/gsof/ins_solution_49 (NavigationSolutionGsof49)` to `/ins_pose (PoseStamped)` for evaluation (requires `applanix_msgs`). By default it also publishes orientation from roll/pitch/heading; see `--orientation-mode`.
 7. `tools/plot_pose_csv.py`  
-   Plot XY trajectory (START/GOAL markers) and z+RPY time series. Yaw reference uses attitude reference CSV (if provided), otherwise GT quaternion (if available), otherwise course from GT positions.
+   Plot XY trajectory (START/GOAL markers) and z+RPY time series. By default, yaw reference prefers GT quaternion (if available), otherwise attitude reference CSV (if provided), otherwise course from GT positions.
 
 Example:
 
