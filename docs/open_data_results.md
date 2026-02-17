@@ -82,7 +82,7 @@ The produced files are:
 - `summary.csv`
 - `ranking_by_rmse_3d.csv`
 - `ranking_by_rmse_3d_nobias.csv`
-- `open_data_sweep_report_*.html`
+- `open_data_report_*.html` (single-bag sweep)
 - `best_plots/*`
 
 Copy them into `docs/results/open_data/<case>/` if you want to publish in the repository.
