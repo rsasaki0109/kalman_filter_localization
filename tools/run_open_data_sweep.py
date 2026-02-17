@@ -10,6 +10,7 @@ import html
 import itertools
 import json
 import os
+import math
 import signal
 import subprocess
 import sys
@@ -52,6 +53,94 @@ def parse_static_tf_args(text: str) -> List[str]:
             "x,y,z,qx,qy,qz,qw,frame_id,child_frame_id"
         )
     return items
+
+
+def quat_from_rpy(roll: float, pitch: float, yaw: float) -> Tuple[float, float, float, float]:
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    qw = cr * cp * cy + sr * sp * sy
+    qx = sr * cp * cy - cr * sp * sy
+    qy = cr * sp * cy + sr * cp * sy
+    qz = cr * cp * sy - sr * sp * cy
+    return qx, qy, qz, qw
+
+
+def quat_to_rpy(qx: float, qy: float, qz: float, qw: float) -> Tuple[float, float, float]:
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+
+    sinp = 2.0 * (qw * qy - qz * qx)
+    if sinp <= -1.0:
+        pitch = -math.pi / 2.0
+    elif sinp >= 1.0:
+        pitch = math.pi / 2.0
+    else:
+        pitch = math.asin(sinp)
+
+    sinr_cosp = 2.0 * (qw * qx + qy * qz)
+    cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+    return roll, pitch, yaw
+
+
+def read_initial_yaw_from_pose_topic(
+    *, topic: str, msg_type: str, timeout_sec: float, qos_depth: int
+) -> float:
+    import rclpy
+    from geometry_msgs.msg import PoseStamped
+    from nav_msgs.msg import Odometry
+    from rclpy.node import Node
+    from sensor_msgs.msg import Imu
+
+    class InitialYawListener(Node):
+        def __init__(self) -> None:
+            super().__init__("initial_yaw_listener")
+            self._yaw: Optional[float] = None
+            qos = int(qos_depth) if qos_depth > 0 else 10
+            if msg_type == "pose_stamped":
+                self._sub = self.create_subscription(
+                    PoseStamped, topic, self._on_pose_stamped, qos
+                )
+            elif msg_type == "odometry":
+                self._sub = self.create_subscription(Odometry, topic, self._on_odometry, qos)
+            elif msg_type == "imu":
+                self._sub = self.create_subscription(Imu, topic, self._on_imu, qos)
+            else:  # pragma: no cover
+                raise ValueError(f"unsupported msg type for initial yaw source: {msg_type}")
+
+        def _on_pose_stamped(self, msg: PoseStamped) -> None:
+            self._on_quat(msg.pose.orientation)
+
+        def _on_odometry(self, msg: Odometry) -> None:
+            self._on_quat(msg.pose.pose.orientation)
+
+        def _on_imu(self, msg: Imu) -> None:
+            self._on_quat(msg.orientation)
+
+        def _on_quat(self, q) -> None:
+            if self._yaw is None:
+                siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+                cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                self._yaw = math.atan2(siny_cosp, cosy_cosp)
+
+    rclpy.init()
+    node = InitialYawListener()
+    deadline = time.time() + max(0.0, float(timeout_sec))
+    try:
+        while rclpy.ok() and time.time() < deadline and node._yaw is None:
+            rclpy.spin_once(node, timeout_sec=0.1)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+    if node._yaw is None:
+        raise TimeoutError(f"timed out waiting for initial yaw from {topic} ({msg_type})")
+    return float(node._yaw)
 
 
 def ros_value(v: object) -> str:
@@ -176,6 +265,8 @@ def write_html_report(
             f"<div><b>yaw_ref</b>: <code>{esc(row.get('yaw_reference',''))}</code></div>",
             f"<div><b>yaw_rmse_deg</b>: <code>{esc(row.get('yaw_rmse_deg',''))}</code></div>",
             f"<div><b>att_angle_rmse_deg</b>: <code>{esc(row.get('attitude_angle_rmse_deg',''))}</code></div>",
+            f"<div><b>initial_yaw</b>: <code>{esc(row.get('initial_yaw_label', ''))}</code></div>",
+            f"<div><b>initial_yaw_deg</b>: <code>{esc(row.get('initial_yaw_deg', ''))}</code></div>",
         ]
         params = {k: row.get(k, "") for k in keys}
         parts.append(f"<div><b>params</b>: <code>{esc(params)}</code></div>")
@@ -315,6 +406,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--initial-pose", default="0,0,0,0,0,0,1")
     p.add_argument("--publish-initial-pose", action="store_true", default=True)
     p.add_argument("--no-publish-initial-pose", action="store_false", dest="publish_initial_pose")
+    p.add_argument(
+        "--initial-yaw-source-topic",
+        default=None,
+        help="optional topic to derive initial yaw from (e.g. /ins_pose)",
+    )
+    p.add_argument(
+        "--initial-yaw-source-msg-type",
+        choices=["pose_stamped", "odometry", "imu"],
+        default="pose_stamped",
+        help="message type for --initial-yaw-source-topic (default: pose_stamped)",
+    )
+    p.add_argument("--initial-yaw-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--initial-yaw-timeout-sec",
+        type=float,
+        default=5.0,
+        help="timeout for initial yaw sample read in seconds (default: 5.0)",
+    )
     p.add_argument(
         "--initial-pose-wait-subscriptions",
         type=int,
@@ -617,8 +726,57 @@ def main() -> int:
 
             time.sleep(args.startup_sec)
 
+            play_cmd = [
+                "ros2",
+                "bag",
+                "play",
+                str(args.bag_path),
+                "--clock",
+                "--rate",
+                f"{args.play_rate:.12g}",
+            ]
+            if args.bag_start_offset_sec > 0.0:
+                play_cmd.extend(["--start-offset", f"{args.bag_start_offset_sec:.12g}"])
+            if args.play_topics:
+                play_cmd.extend(["--topics", *args.play_topics])
+
+            play_proc = start_background_process(
+                "bag_play", play_cmd, run_dir / "bag_play.log"
+            )
+            processes.append(play_proc)
+
             if args.publish_initial_pose:
                 x, y, z, qx, qy, qz, qw = initial_pose
+                initial_yaw_label = "yaw_init = from --initial-pose"
+                initial_yaw_deg = ""
+                if args.initial_yaw_source_topic:
+                    try:
+                        initial_yaw = read_initial_yaw_from_pose_topic(
+                            topic=args.initial_yaw_source_topic,
+                            msg_type=args.initial_yaw_source_msg_type,
+                            timeout_sec=max(args.initial_yaw_timeout_sec, 1.0),
+                            qos_depth=args.initial_yaw_qos_depth,
+                        )
+                        roll, pitch, _ = quat_to_rpy(qx, qy, qz, qw)
+                        qx, qy, qz, qw = quat_from_rpy(roll, pitch, initial_yaw)
+                        initial_yaw_label = "yaw_init = yaw_poslv"
+                        initial_yaw_deg = f"{math.degrees(initial_yaw):.6f}"
+                    except Exception as e:  # pylint: disable=broad-except
+                        print(f"  warning: could not set initial yaw from topic: {e}")
+                        initial_yaw_label = "yaw_init = fallback (pose arg)"
+                        _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
+                        initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
+                if not initial_yaw_deg:
+                    _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
+                    initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
+
+                (run_dir / "initial_yaw.log").write_text(
+                    f"label={initial_yaw_label}\n"
+                    f"value_deg={initial_yaw_deg}\n"
+                    f"topic={args.initial_yaw_source_topic}\n",
+                    encoding="utf-8",
+                )
+
                 pose_yaml = (
                     "{header: {frame_id: '"
                     + args.reference_frame_id
@@ -672,22 +830,7 @@ def main() -> int:
                     )
                     print("  warning: initial pose publish timed out")
 
-            play_cmd = [
-                "ros2",
-                "bag",
-                "play",
-                str(args.bag_path),
-                "--clock",
-                "--rate",
-                f"{args.play_rate:.12g}",
-            ]
-            if args.bag_start_offset_sec > 0.0:
-                play_cmd.extend(["--start-offset", f"{args.bag_start_offset_sec:.12g}"])
-            if args.play_topics:
-                play_cmd.extend(["--topics", *args.play_topics])
-            with (run_dir / "bag_play.log").open("w", encoding="utf-8") as f:
-                subprocess.run(play_cmd, check=True, stdout=f, stderr=subprocess.STDOUT)
-
+            play_proc.proc.wait()
             time.sleep(args.tail_sec)
 
         except subprocess.CalledProcessError as e:
@@ -701,6 +844,9 @@ def main() -> int:
                 stop_background_process(p)
 
         metrics: Dict[str, object] = {
+            "initial_yaw_label": "",
+            "initial_yaw_deg": "",
+            "initial_yaw_source_topic": "",
             "time_normalize": "",
             "time_align": "",
             "yaw_reference": "",
@@ -729,6 +875,18 @@ def main() -> int:
             "yaw_bias_deg": "",
             "yaw_mae_deg": "",
         }
+
+        try:
+            yaw_label = (run_dir / "initial_yaw.log").read_text(encoding="utf-8")
+            for line in yaw_label.splitlines():
+                if line.startswith("label="):
+                    metrics["initial_yaw_label"] = line.split("=", 1)[1]
+                elif line.startswith("value_deg="):
+                    metrics["initial_yaw_deg"] = line.split("=", 1)[1]
+                elif line.startswith("topic="):
+                    metrics["initial_yaw_source_topic"] = line.split("=", 1)[1]
+        except Exception:
+            pass
 
         if status == "ok":
             eval_cmd = [
@@ -782,6 +940,9 @@ def main() -> int:
             "run_id",
             "status",
             *keys,
+            "initial_yaw_label",
+            "initial_yaw_deg",
+            "initial_yaw_source_topic",
             "time_normalize",
             "time_align",
             "yaw_reference",
@@ -826,6 +987,9 @@ def main() -> int:
             "run_id",
             "status",
             *keys,
+            "initial_yaw_label",
+            "initial_yaw_deg",
+            "initial_yaw_source_topic",
             "time_normalize",
             "time_align",
             "yaw_reference",
@@ -912,6 +1076,9 @@ def main() -> int:
                 ]
                 if (run_dir / "attitude_reference.csv").exists():
                     plot_cmd.extend(["--attitude-reference-csv", str(run_dir / "attitude_reference.csv")])
+                initial_yaw_plot_suffix = str(row.get("initial_yaw_label", ""))
+                if initial_yaw_plot_suffix:
+                    plot_cmd.extend(["--title-suffix", initial_yaw_plot_suffix])
 
                 plot_result = subprocess.run(
                     plot_cmd,
