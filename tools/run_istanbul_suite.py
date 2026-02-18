@@ -118,6 +118,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="forwarded to tools/run_open_data_sweep.py",
     )
     p.add_argument(
+        "--initial-yaw-source-topic",
+        default=None,
+        help=(
+            "topic used to read yaw for initial pose (forwarded to run_open_data_sweep.py). "
+            "If omitted and --ground-truth is ins_pose, defaults to the ground-truth topic."
+        ),
+    )
+    p.add_argument(
+        "--initial-yaw-source-msg-type",
+        choices=["pose_stamped", "odometry", "imu"],
+        default="pose_stamped",
+        help="message type for --initial-yaw-source-topic (default: pose_stamped)",
+    )
+    p.add_argument("--initial-yaw-qos-depth", type=int, default=10)
+    p.add_argument(
+        "--initial-yaw-timeout-sec",
+        type=float,
+        default=5.0,
+        help="timeout for initial yaw sample read in seconds",
+    )
+    p.add_argument(
         "--no-attitude-reference",
         action="store_true",
         help="do not record IMU attitude reference CSV (plots will use GT quaternion if available)",
@@ -293,6 +314,10 @@ def main() -> int:
         ground_truth_topic = "/gnss_pose" if args.ground_truth == "gnss_pose" else "/ins_pose"
         if args.ground_truth == "ins_pose":
             play_topics.append("/lvx_client/gsof/ins_solution_49")
+        initial_yaw_source_topic = args.initial_yaw_source_topic
+        if initial_yaw_source_topic is None and args.ground_truth == "ins_pose":
+            initial_yaw_source_topic = ground_truth_topic
+
         cmd = [
             sys.executable,
             str(SWEEP_SCRIPT),
@@ -329,6 +354,17 @@ def main() -> int:
             "--play-rate",
             f"{args.play_rate:.12g}",
         ]
+        if initial_yaw_source_topic:
+            cmd += [
+                "--initial-yaw-source-topic",
+                initial_yaw_source_topic,
+                "--initial-yaw-source-msg-type",
+                args.initial_yaw_source_msg_type,
+                "--initial-yaw-qos-depth",
+                str(args.initial_yaw_qos_depth),
+                "--initial-yaw-timeout-sec",
+                f"{args.initial_yaw_timeout_sec:.12g}",
+            ]
         if args.ground_truth == "ins_pose":
             # Applanix INS reference in Istanbul bags:
             # /lvx_client/gsof/ins_solution_49 (applanix_msgs/msg/NavigationSolutionGsof49)
