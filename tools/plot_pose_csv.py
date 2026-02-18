@@ -214,6 +214,34 @@ def filter_pose_samples(
     return filtered
 
 
+def trim_time_series(
+    x_t: Sequence[float],
+    y_vals: Sequence[float],
+    *,
+    t_start_sec: float,
+    t_end_sec: float,
+) -> Tuple[List[float], List[float]]:
+    if len(x_t) != len(y_vals):
+        raise ValueError("time and value arrays must have same length")
+    if not x_t:
+        return [], []
+    if t_start_sec < 0.0:
+        raise ValueError("--trim-start-sec must be >= 0")
+    if t_end_sec < 0.0:
+        raise ValueError("--trim-end-sec must be >= 0")
+
+    out_t: List[float] = []
+    out_vals: List[float] = []
+    for x, y in zip(x_t, y_vals):
+        if x < t_start_sec:
+            continue
+        if t_end_sec > 0.0 and x > t_end_sec:
+            continue
+        out_t.append(x)
+        out_vals.append(y)
+    return out_t, out_vals
+
+
 def gt_quat_is_identity(gt: Sequence[PoseSample], tol: float = 1e-6) -> bool:
     if not gt:
         return True
@@ -346,6 +374,8 @@ def plot_timeseries_z_rpy(
     rpy_reference: str,
     max_time_gap_sec: float,
     attitude_min_speed_mps: float,
+    trim_start_sec: float,
+    trim_end_sec: float,
     title_suffix: Optional[str] = None,
 ) -> None:
     if not est or not gt:
@@ -494,6 +524,79 @@ def plot_timeseries_z_rpy(
         err_yaw_deg.append(wrap_to_pi(yaw_est - yaw_ref) * 180.0 / math.pi)
         err_t.append(t_rel)
 
+    if trim_start_sec < 0.0:
+        raise ValueError("--trim-start-sec must be >= 0")
+    if trim_end_sec < 0.0:
+        raise ValueError("--trim-end-sec must be >= 0")
+
+    total_max_t = max(err_t) if err_t else 0.0
+    if total_max_t <= 0.0:
+        total_max_candidates = [
+            max(est_t) if est_t else 0.0,
+            max(gt_t) if gt_t else 0.0,
+            max(ref_t) if ref_t else 0.0,
+            max(rpy_ref_t) if rpy_ref_t else 0.0,
+            max(yaw_ref_t) if yaw_ref_t else 0.0,
+        ]
+        if total_max_candidates:
+            total_max_t = max(total_max_candidates)
+
+    trim_start = max(0.0, trim_start_sec)
+    trim_end = total_max_t - max(0.0, trim_end_sec)
+    if trim_end < trim_start:
+        trim_start = 0.0
+        trim_end = total_max_t
+    if trim_end < trim_start:
+        trim_start = 0.0
+        trim_end = total_max_t
+
+    gt_t, gt_z = trim_time_series(gt_t, gt_z, t_start_sec=trim_start, t_end_sec=trim_end)
+    est_t_z, est_z = trim_time_series(est_t, est_z, t_start_sec=trim_start, t_end_sec=trim_end)
+
+    if rpy_ref_quat is not None:
+        rpy_ref_t_r, rpy_ref_r_d = trim_time_series(
+            rpy_ref_t, rpy_ref_r_d, t_start_sec=trim_start, t_end_sec=trim_end
+        )
+        rpy_ref_t_p, rpy_ref_p_d = trim_time_series(
+            rpy_ref_t, rpy_ref_p_d, t_start_sec=trim_start, t_end_sec=trim_end
+        )
+        rpy_ref_t = rpy_ref_t_r
+    else:
+        rpy_ref_t = []
+        rpy_ref_r_d = []
+        rpy_ref_t_p = []
+        rpy_ref_p_d = []
+
+    est_r_t, est_r_d = trim_time_series(est_t, est_r_d, t_start_sec=trim_start, t_end_sec=trim_end)
+    est_p_t, est_p_d = trim_time_series(est_t, est_p_d, t_start_sec=trim_start, t_end_sec=trim_end)
+    est_y_t, est_yaw_d = trim_time_series(est_t, est_yaw_d, t_start_sec=trim_start, t_end_sec=trim_end)
+
+    if yaw_ref_quat is not None:
+        yaw_ref_t, yaw_ref_yaw_d = trim_time_series(
+            yaw_ref_t, yaw_ref_yaw_d, t_start_sec=trim_start, t_end_sec=trim_end
+        )
+    else:
+        yaw_ref_t = []
+        yaw_ref_yaw_d = []
+        course_t = []
+        course_yaw_deg = []
+
+    if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
+        course_t = []
+        course_yaw_deg = []
+    else:
+        course_t, course_yaw_deg = trim_time_series(
+            err_t, course_yaw_deg, t_start_sec=trim_start, t_end_sec=trim_end
+        )
+    err_t_yaw, err_yaw_deg = trim_time_series(
+        err_t, err_yaw_deg, t_start_sec=trim_start, t_end_sec=trim_end
+    )
+    err_t_r, err_roll_deg = trim_time_series(
+        err_t, err_roll_deg, t_start_sec=trim_start, t_end_sec=trim_end
+    )
+    err_t_p, err_pitch_deg = trim_time_series(
+        err_t, err_pitch_deg, t_start_sec=trim_start, t_end_sec=trim_end
+    )
     fig, axes = plt.subplots(5, 1, figsize=(14, 13), sharex=True)
 
     axes[0].plot(
@@ -506,7 +609,7 @@ def plot_timeseries_z_rpy(
         zorder=2,
     )
     axes[0].plot(
-        est_t,
+        est_t_z,
         est_z,
         color="#d62728",
         linewidth=1.7,
@@ -528,7 +631,7 @@ def plot_timeseries_z_rpy(
             zorder=2,
         )
     axes[1].plot(
-        est_t,
+        est_r_t,
         est_r_d,
         color="#d62728",
         linewidth=1.7,
@@ -550,7 +653,7 @@ def plot_timeseries_z_rpy(
             zorder=2,
         )
     axes[2].plot(
-        est_t,
+        est_p_t,
         est_p_d,
         color="#d62728",
         linewidth=1.7,
@@ -562,7 +665,7 @@ def plot_timeseries_z_rpy(
     axes[2].legend(loc="best", frameon=False)
 
     axes[3].plot(
-        est_t,
+        est_y_t,
         est_yaw_d,
         color="#d62728",
         linewidth=1.7,
@@ -582,7 +685,7 @@ def plot_timeseries_z_rpy(
         )
     else:
         axes[3].plot(
-            err_t,
+            err_t_yaw,
             course_yaw_deg,
             color="#1f77b4",
             linewidth=2.0,
@@ -595,7 +698,7 @@ def plot_timeseries_z_rpy(
 
     if yaw_reference in ("gt_quat", "attitude_csv") and yaw_ref_quat is not None:
         axes[4].plot(
-            err_t,
+            err_t_r,
             err_roll_deg,
             color="#2ca02c",
             linewidth=1.6,
@@ -604,7 +707,7 @@ def plot_timeseries_z_rpy(
             zorder=2,
         )
         axes[4].plot(
-            err_t,
+            err_t_p,
             err_pitch_deg,
             color="#ff7f0e",
             linewidth=1.6,
@@ -613,7 +716,7 @@ def plot_timeseries_z_rpy(
             zorder=2,
         )
         axes[4].plot(
-            err_t,
+            err_t_yaw,
             err_yaw_deg,
             color="black",
             linewidth=1.6,
@@ -624,7 +727,7 @@ def plot_timeseries_z_rpy(
         ylabel = "angle err [deg]"
     else:
         axes[4].plot(
-            err_t,
+            err_t_yaw,
             err_yaw_deg,
             color="black",
             linewidth=1.6,
@@ -715,6 +818,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "gt_quat", "attitude_csv"],
         default="auto",
         help="reference source for roll/pitch display. auto prefers gt_quat (if available), otherwise attitude_csv",
+    )
+    p.add_argument(
+        "--trim-start-sec",
+        type=float,
+        default=0.0,
+        help="skip first N seconds when plotting time-series data",
+    )
+    p.add_argument(
+        "--trim-end-sec",
+        type=float,
+        default=0.0,
+        help="skip last N seconds when plotting time-series data",
     )
     return p
 
@@ -831,6 +946,8 @@ def main() -> int:
         rpy_reference=args.rpy_reference,
         max_time_gap_sec=args.max_time_gap_sec,
         attitude_min_speed_mps=args.attitude_min_speed_mps,
+        trim_start_sec=args.trim_start_sec,
+        trim_end_sec=args.trim_end_sec,
     )
 
     print(xy_path)
