@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 
 import rclpy
-from geometry_msgs.msg import Imu
+from sensor_msgs.msg import Imu
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 
@@ -150,9 +150,22 @@ class Gsof49ToImu(Node):
         )
 
     def _callback(self, msg: NavigationSolutionGsof49) -> None:
-        roll_rad = math.radians(float(msg.attitude.roll))
-        pitch_rad = math.radians(float(msg.attitude.pitch))
-        yaw_rad = math.radians(float(msg.attitude.heading))
+        def _read(msg_obj: object, *names: str) -> float:
+            for name in names:
+                cur = msg_obj
+                ok = True
+                for item in name.split("."):
+                    if not hasattr(cur, item):
+                        ok = False
+                        break
+                    cur = getattr(cur, item)
+                if ok:
+                    return float(cur)
+            raise RuntimeError(f"Unsupported GSOF49 field; checked {names}")
+
+        roll_rad = math.radians(_read(msg, "roll", "attitude.roll"))
+        pitch_rad = math.radians(_read(msg, "pitch", "attitude.pitch"))
+        yaw_rad = math.radians(_read(msg, "heading", "attitude.heading", "attitude.yaw"))
         qx, qy, qz, qw = quat_from_rpy(roll_rad, pitch_rad, yaw_rad)
         qx, qy, qz, qw = transform_body_to_ros(
             qx, qy, qz, qw, convert=self._config.output_mode == "ros"
@@ -175,21 +188,44 @@ class Gsof49ToImu(Node):
             imu_msg.orientation.y = qy
             imu_msg.orientation.z = qz
             imu_msg.orientation.w = qw
-
             if self._config.output_mode == "ros":
-                imu_msg.angular_velocity.x = math.radians(float(msg.angular_rate.roll))
-                imu_msg.angular_velocity.y = -math.radians(float(msg.angular_rate.pitch))
-                imu_msg.angular_velocity.z = -math.radians(float(msg.angular_rate.heading))
-                imu_msg.linear_acceleration.x = float(msg.acceleration.x)
-                imu_msg.linear_acceleration.y = -float(msg.acceleration.y)
-                imu_msg.linear_acceleration.z = -float(msg.acceleration.z)
+                imu_msg.angular_velocity.x = math.radians(
+                    _read(msg, "ang_rate_long", "angular_rate.roll", "x_rate", "x")
+                )
+                imu_msg.angular_velocity.y = -math.radians(
+                    _read(msg, "ang_rate_trans", "angular_rate.pitch", "y_rate", "y")
+                )
+                imu_msg.angular_velocity.z = -math.radians(
+                    _read(msg, "ang_rate_down", "angular_rate.heading", "angular_rate.yaw", "z_rate", "z")
+                )
+                imu_msg.linear_acceleration.x = _read(
+                    msg, "acc_long", "acceleration.x", "accel.x"
+                )
+                imu_msg.linear_acceleration.y = -_read(
+                    msg, "acc_trans", "acceleration.y", "accel.y"
+                )
+                imu_msg.linear_acceleration.z = -_read(
+                    msg, "acc_down", "acceleration.z", "accel.z"
+                )
             else:
-                imu_msg.angular_velocity.x = math.radians(float(msg.angular_rate.roll))
-                imu_msg.angular_velocity.y = math.radians(float(msg.angular_rate.pitch))
-                imu_msg.angular_velocity.z = math.radians(float(msg.angular_rate.heading))
-                imu_msg.linear_acceleration.x = float(msg.acceleration.x)
-                imu_msg.linear_acceleration.y = float(msg.acceleration.y)
-                imu_msg.linear_acceleration.z = float(msg.acceleration.z)
+                imu_msg.angular_velocity.x = math.radians(
+                    _read(msg, "ang_rate_long", "angular_rate.roll", "x_rate", "x")
+                )
+                imu_msg.angular_velocity.y = math.radians(
+                    _read(msg, "ang_rate_trans", "angular_rate.pitch", "y_rate", "y")
+                )
+                imu_msg.angular_velocity.z = math.radians(
+                    _read(msg, "ang_rate_down", "angular_rate.heading", "angular_rate.yaw", "z_rate", "z")
+                )
+                imu_msg.linear_acceleration.x = _read(
+                    msg, "acc_long", "acceleration.x", "accel.x"
+                )
+                imu_msg.linear_acceleration.y = _read(
+                    msg, "acc_trans", "acceleration.y", "accel.y"
+                )
+                imu_msg.linear_acceleration.z = _read(
+                    msg, "acc_down", "acceleration.z", "accel.z"
+                )
 
         imu_msg.orientation_covariance[0] = float("nan")
         imu_msg.orientation_covariance[4] = float("nan")

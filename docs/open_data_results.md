@@ -35,7 +35,37 @@ Results here are generated from `run_open_data_sweep.py`/suite runs and stored i
 - [ranking_by_rmse_3d.csv](results/open_data/istanbul_bag1_course_yaw/ranking_by_rmse_3d.csv)
 - [suite_summary.csv](results/open_data/istanbul_bag1_course_yaw/suite_summary.csv)
 
-### Flat-ground tuning case (GNSS course yaw off)
+### Istanbul `all-sensors-bag3_compressed` (bag3 focused)
+
+| Metric | Value |
+| --- | --- |
+| RMSE 3D [m] | 7.68750 |
+| RMSE XY [m] | 7.65635 |
+| RMSE 3D (no bias) [m] | 6.37190 |
+| Bias Z [m] | 0.36961 |
+| Attitude angle RMSE [deg] | 0.29720 |
+| Roll RMSE [deg] | 0.12326 |
+| Pitch RMSE [deg] | 0.13354 |
+| Yaw RMSE [deg] | 0.23121 |
+| Best run id | `run_004` |
+| Reference | `gt_quat` |
+
+**Best parameters (`run_004`)**  
+`use_imu_orientation = true`, `use_imu_orientation_covariance = true`,  
+`var_imu_orientation_rpy = 0.0015`, `var_imu_w = 0.01`, `var_imu_acc = 0.01`,  
+`var_gnss_xy = 0.05`, `var_gnss_z = 0.1`, `max_imu_dt_sec = 1.0`
+
+![bag3 trajectory](results/open_data/istanbul_bag3_course_yaw/trajectory_xy.png)
+
+![bag3 z+RPY](results/open_data/istanbul_bag3_course_yaw/timeseries_z_rpy.png)
+
+- [summary.csv](results/open_data/istanbul_bag3_course_yaw/summary.csv)
+- [ranking_by_rmse_3d.csv](results/open_data/istanbul_bag3_course_yaw/ranking_by_rmse_3d.csv)
+- [ranking_by_rmse_3d_nobias.csv](results/open_data/istanbul_bag3_course_yaw/ranking_by_rmse_3d_nobias.csv)
+- [suite_summary.csv](results/open_data/istanbul_bag3_course_yaw/suite_summary.csv)
+
+
+## Flat-ground tuning case (GNSS course yaw off)
 
 | Metric | Value |
 | --- | --- |

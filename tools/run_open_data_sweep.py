@@ -126,6 +126,15 @@ def read_initial_yaw_from_pose_topic(
 
         def _on_quat(self, q) -> None:
             if self._yaw is None:
+                if not (
+                    math.isfinite(q.x)
+                    and math.isfinite(q.y)
+                    and math.isfinite(q.z)
+                    and math.isfinite(q.w)
+                ):
+                    return
+                if (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w) <= 0.0:
+                    return
                 siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
                 cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
                 self._yaw = math.atan2(siny_cosp, cosy_cosp)
@@ -431,8 +440,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--initial-yaw-timeout-sec",
         type=float,
-        default=5.0,
-        help="timeout for initial yaw sample read in seconds (default: 5.0)",
+        default=30.0,
+        help="timeout for initial yaw sample read in seconds (default: 30.0)",
     )
     p.add_argument(
         "--initial-pose-wait-subscriptions",
@@ -625,7 +634,6 @@ def main() -> int:
     cached_initial_yaw: Optional[float] = None
     cached_initial_yaw_label = ""
     cached_initial_yaw_deg = ""
-    initial_yaw_source_read_failed = False
     fixed_ros_params = {
         "reference_frame_id": args.reference_frame_id,
         "robot_frame_id": args.robot_frame_id,
@@ -818,7 +826,7 @@ def main() -> int:
                 initial_yaw_label = "yaw_init = from --initial-pose"
                 initial_yaw_deg = ""
                 if args.initial_yaw_source_topic:
-                    if cached_initial_yaw is None and not initial_yaw_source_read_failed:
+                    if cached_initial_yaw is None:
                         try:
                             cached_initial_yaw = read_initial_yaw_from_pose_topic(
                                 topic=args.initial_yaw_source_topic,
@@ -830,7 +838,6 @@ def main() -> int:
                             cached_initial_yaw_deg = f"{math.degrees(cached_initial_yaw):.6f}"
                         except Exception as e:  # pylint: disable=broad-except
                             print(f"  warning: could not set initial yaw from topic: {e}")
-                            initial_yaw_source_read_failed = True
                             cached_initial_yaw = None
                             cached_initial_yaw_label = "yaw_init = fallback (pose arg)"
                             _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
