@@ -61,6 +61,7 @@ ekf_localization_node
 |min_gnss_course_distance_m|double|1.0|minimum GNSS displacement used to compute course yaw [m]|
 |min_gnss_course_speed_mps|double|0.5|minimum speed used to accept GNSS course yaw [m/s]|
 |max_gnss_course_dt_sec|double|1.0|maximum GNSS dt used for course yaw computation [s]|
+|max_gnss_course_dyaw_rad|double|3.14159|maximum allowed GNSS-course yaw innovation before skipping the update [rad]|
 |use_gnss|bool|true|whether gnss is used or not |
 |use_odom|bool|false|whether odom(lo/vo) is used or not |
 |output_stamp_source|string|latest_input|timestamp source for `current_pose.header.stamp` (`latest_input`, `imu`, `ros_time`)|
