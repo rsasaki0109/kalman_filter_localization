@@ -47,7 +47,7 @@ Output files:
 - `summary.csv`: all runs + metrics
 - `ranking_by_rmse_3d.csv`
 - `ranking_by_rmse_3d_nobias.csv`
-- `open_data_sweep_report_*.html`
+- `open_data_report_*.html` (single-bag sweep)
 
 If you need IMU-based attitude comparison, add `--attitude-reference-topic ... --attitude-reference-msg-type imu` and plot with `--plot-best`.
 
@@ -78,6 +78,9 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --initial-yaw-source-msg-type pose_stamped \
   --initial-yaw-timeout-sec 8.0 \
   --plot-best \
+  --enable-applanix-to-imu \
+  --applanix-imu-output-topic /ins_imu \
+  --applanix-imu-output-mode ros \
   --enable-applanix-to-pose \
   --applanix-input-topic /lvx_client/gsof/ins_solution_49 \
   --applanix-output-topic /ins_pose \
@@ -116,7 +119,10 @@ ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_open
   --applanix-input-topic /lvx_client/gsof/ins_solution_49 \
   --applanix-output-topic /ins_pose \
   --applanix-origin-navsatfix-topic /gnss/fix \
-  --applanix-orientation-mode ros
+  --applanix-orientation-mode ros \
+  --enable-applanix-to-imu \
+  --applanix-imu-output-topic /ins_imu \
+  --applanix-imu-output-mode ros
 ```
 
 ## Multi-bag suite
@@ -125,8 +131,18 @@ ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_open
 ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_istanbul_suite.py \
   --output-dir /tmp/kfl_istanbul_suite \
   --param-grid-json src/kalman_filter_localization/tools/param_grid_istanbul_quick.json \
-  --initial-yaw-source-topic /gnss_pose
+  --ground-truth ins_pose \
+  --initial-yaw-source-topic /ins_pose
 ```
+
+For `--ground-truth ins_pose`, suite run automatically starts
+`tools/gsof49_to_imu.py` and uses `/ins_imu` as EKF IMU input plus the attitude reference.
+
+Output files:
+
+- `istanbul_suite_summary_<timestamp>.csv`
+- `open_data_suite_report_*.html`
+- `best_plots/*`
 
 ## Timestamp notes
 
