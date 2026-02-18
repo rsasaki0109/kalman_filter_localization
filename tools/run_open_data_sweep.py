@@ -577,6 +577,10 @@ def main() -> int:
     print(f"output_dir: {args.output_dir}")
 
     rows: List[Dict[str, object]] = []
+    cached_initial_yaw: Optional[float] = None
+    cached_initial_yaw_label = ""
+    cached_initial_yaw_deg = ""
+    initial_yaw_source_read_failed = False
     fixed_ros_params = {
         "reference_frame_id": args.reference_frame_id,
         "robot_frame_id": args.robot_frame_id,
@@ -750,22 +754,32 @@ def main() -> int:
                 initial_yaw_label = "yaw_init = from --initial-pose"
                 initial_yaw_deg = ""
                 if args.initial_yaw_source_topic:
-                    try:
-                        initial_yaw = read_initial_yaw_from_pose_topic(
-                            topic=args.initial_yaw_source_topic,
-                            msg_type=args.initial_yaw_source_msg_type,
-                            timeout_sec=max(args.initial_yaw_timeout_sec, 1.0),
-                            qos_depth=args.initial_yaw_qos_depth,
-                        )
+                    if cached_initial_yaw is None and not initial_yaw_source_read_failed:
+                        try:
+                            cached_initial_yaw = read_initial_yaw_from_pose_topic(
+                                topic=args.initial_yaw_source_topic,
+                                msg_type=args.initial_yaw_source_msg_type,
+                                timeout_sec=max(args.initial_yaw_timeout_sec, 1.0),
+                                qos_depth=args.initial_yaw_qos_depth,
+                            )
+                            cached_initial_yaw_label = "yaw_init = yaw_poslv"
+                            cached_initial_yaw_deg = f"{math.degrees(cached_initial_yaw):.6f}"
+                        except Exception as e:  # pylint: disable=broad-except
+                            print(f"  warning: could not set initial yaw from topic: {e}")
+                            initial_yaw_source_read_failed = True
+                            cached_initial_yaw = None
+                            cached_initial_yaw_label = "yaw_init = fallback (pose arg)"
+                            _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
+                            cached_initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
+
+                    if cached_initial_yaw is not None:
                         roll, pitch, _ = quat_to_rpy(qx, qy, qz, qw)
-                        qx, qy, qz, qw = quat_from_rpy(roll, pitch, initial_yaw)
-                        initial_yaw_label = "yaw_init = yaw_poslv"
-                        initial_yaw_deg = f"{math.degrees(initial_yaw):.6f}"
-                    except Exception as e:  # pylint: disable=broad-except
-                        print(f"  warning: could not set initial yaw from topic: {e}")
-                        initial_yaw_label = "yaw_init = fallback (pose arg)"
-                        _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
-                        initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
+                        qx, qy, qz, qw = quat_from_rpy(roll, pitch, cached_initial_yaw)
+                        initial_yaw_label = cached_initial_yaw_label
+                        initial_yaw_deg = cached_initial_yaw_deg
+                    else:
+                        initial_yaw_label = cached_initial_yaw_label
+                        initial_yaw_deg = cached_initial_yaw_deg
                 if not initial_yaw_deg:
                     _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
                     initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
