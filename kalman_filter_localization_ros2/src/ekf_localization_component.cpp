@@ -211,6 +211,14 @@ struct EkfLocalizationComponent::Impl
       }
     }
 
+    if (!std::isfinite(gravity_mps2_) || gravity_mps2_ < 0.0) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gravity_mps2=%f. fallback to default=9.80665",
+        gravity_mps2_);
+      gravity_mps2_ = 9.80665;
+    }
+
     ekf_.setVarImuGyro(var_imu_w_);
     ekf_.setVarImuAcc(var_imu_acc_);
     if (!ekf_.setMaxPredictionDtSec(max_imu_dt_sec_)) {

@@ -266,7 +266,7 @@ def write_html_report(
             ]
         )
 
-    def kv_run(row: Dict[str, object]) -> str:
+    def kv_run(row: Dict[str, object], *, show_images: bool = True) -> str:
         run_id = str(row.get("run_id", ""))
         parts = [
             f"<div><b>run_id</b>: <code>{esc(run_id)}</code></div>",
@@ -281,7 +281,41 @@ def write_html_report(
         ]
         params = {k: row.get(k, "") for k in keys}
         parts.append(f"<div><b>params</b>: <code>{esc(params)}</code></div>")
-        return "\n".join(parts) + ("\n" + img_section(run_id) if run_id else "")
+        if show_images and run_id:
+            parts.append(img_section(run_id))
+        return "\n".join(parts)
+
+    def kv_best_pair(
+        best_row: Optional[Dict[str, object]],
+        best_nobias_row: Optional[Dict[str, object]],
+    ) -> str:
+        if best_row is None and best_nobias_row is None:
+            return "<div class=\"missing\">(no successful runs)</div>"
+
+        blocks: List[str] = []
+        if best_row is not None:
+            blocks.append("<div class=\"subpanel\"><h3>Best by rmse_3d_m</h3>")
+            blocks.append(kv_run(best_row, show_images=True))
+            blocks.append("</div>")
+
+        if best_nobias_row is None:
+            return "\n".join(blocks)
+
+        best_id = str(best_row.get("run_id", "")) if best_row is not None else ""
+        nobias_id = str(best_nobias_row.get("run_id", ""))
+        show_nobias_image = not best_id or (nobias_id == best_id)
+        if best_id == nobias_id:
+            return "\n".join(blocks)
+
+        blocks.append("<div class=\"subpanel\"><h3>Best by rmse_3d_nobias_m</h3>")
+        blocks.append(
+            kv_run(
+                best_nobias_row,
+                show_images=show_nobias_image,
+            )
+        )
+        blocks.append("</div>")
+        return "\n".join(blocks)
 
     def top_table(rows: Sequence[Dict[str, object]], title: str) -> str:
         head = (
@@ -328,7 +362,7 @@ def write_html_report(
     .sub { color: #333; margin: 0 0 18px 0; }
     code { background: #f3f3f3; padding: 2px 6px; border-radius: 6px; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
-    @media (min-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .subpanel { border: 1px dashed #ddd; border-radius: 10px; padding: 10px; margin-top: 10px; }
     .panel { border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }
     .imgs { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
     img { width: 100%; height: auto; border: 1px solid #eee; border-radius: 10px; }
@@ -343,12 +377,7 @@ def write_html_report(
     ranking_rel = esc(rel(ranking_csv))
     ranking_nb_rel = esc(rel(ranking_nobias_csv))
 
-    best_html = "<div class=\"missing\">(no successful runs)</div>"
-    if best is not None:
-        best_html = kv_run(best)
-    best_nb_html = "<div class=\"missing\">(no successful runs)</div>"
-    if best_nobias is not None:
-        best_nb_html = kv_run(best_nobias)
+    best_html = kv_best_pair(best, best_nobias)
 
     doc = "\n".join(
         [
@@ -370,18 +399,14 @@ def write_html_report(
             f"ranking_nobias_csv: <a href=\"{ranking_nb_rel}\"><code>{ranking_nb_rel}</code></a>"
             "</p>",
             "<p class=\"sub\">"
-            "<b>Legend:</b> "
-            "left panel = best by <code>rmse_3d_m</code> (absolute RMSE, bias included), "
-            "right panel = best by <code>rmse_3d_nobias_m</code> (bias removed before RMSE)."
+            "<b>Best run selection:</b> first is best by <code>rmse_3d_m</code> "
+            "(bias kept), second is best by <code>rmse_3d_nobias_m</code> "
+            "(bias removed before RMSE)."
             "</p>",
             "<div class=\"grid\">",
             "<div class=\"panel\">",
-            "<h2>Left: Best (rmse_3d_m)</h2>",
+            "<h2>Best Runs</h2>",
             best_html,
-            "</div>",
-            "<div class=\"panel\">",
-            "<h2>Right: Best (rmse_3d_nobias_m)</h2>",
-            best_nb_html,
             "</div>",
             "</div>",
             top_table(successful_sorted, "Top 10 by rmse_3d_m"),
@@ -821,28 +846,32 @@ def main() -> int:
             )
             processes.append(play_proc)
 
+            if cached_initial_yaw is None and args.initial_yaw_source_topic:
+                _, _, yaw_from_initial = quat_to_rpy(
+                    initial_pose[3], initial_pose[4], initial_pose[5], initial_pose[6]
+                )
+                try:
+                    cached_initial_yaw = read_initial_yaw_from_pose_topic(
+                        topic=args.initial_yaw_source_topic,
+                        msg_type=args.initial_yaw_source_msg_type,
+                        timeout_sec=max(args.initial_yaw_timeout_sec, 1.0),
+                        qos_depth=args.initial_yaw_qos_depth,
+                    )
+                    cached_initial_yaw_label = "yaw_init = yaw_poslv"
+                    cached_initial_yaw_deg = f"{math.degrees(cached_initial_yaw):.6f}"
+                except Exception as e:  # pylint: disable=broad-except
+                    print(
+                        f"  warning: could not set initial yaw from topic: {e}"
+                    )
+                    cached_initial_yaw = None
+                    cached_initial_yaw_label = "yaw_init = fallback (pose arg)"
+                    cached_initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
+
             if args.publish_initial_pose:
                 x, y, z, qx, qy, qz, qw = initial_pose
                 initial_yaw_label = "yaw_init = from --initial-pose"
                 initial_yaw_deg = ""
                 if args.initial_yaw_source_topic:
-                    if cached_initial_yaw is None:
-                        try:
-                            cached_initial_yaw = read_initial_yaw_from_pose_topic(
-                                topic=args.initial_yaw_source_topic,
-                                msg_type=args.initial_yaw_source_msg_type,
-                                timeout_sec=max(args.initial_yaw_timeout_sec, 1.0),
-                                qos_depth=args.initial_yaw_qos_depth,
-                            )
-                            cached_initial_yaw_label = "yaw_init = yaw_poslv"
-                            cached_initial_yaw_deg = f"{math.degrees(cached_initial_yaw):.6f}"
-                        except Exception as e:  # pylint: disable=broad-except
-                            print(f"  warning: could not set initial yaw from topic: {e}")
-                            cached_initial_yaw = None
-                            cached_initial_yaw_label = "yaw_init = fallback (pose arg)"
-                            _, _, yaw_from_initial = quat_to_rpy(qx, qy, qz, qw)
-                            cached_initial_yaw_deg = f"{math.degrees(yaw_from_initial):.6f}"
-
                     if cached_initial_yaw is not None:
                         roll, pitch, _ = quat_to_rpy(qx, qy, qz, qw)
                         qx, qy, qz, qw = quat_from_rpy(roll, pitch, cached_initial_yaw)
