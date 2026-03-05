@@ -1,0 +1,1 @@
+30 3 * * * cd gnssimu_kf_ros2_ws && src/kalman_filter_localization/tools/run_istanbul_profile_validation_cron.sh >> /tmp/kfl_istanbul_profile_validation_runs/cron.log 2>&1

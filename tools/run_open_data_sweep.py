@@ -54,7 +54,27 @@ def parse_static_tf_args(text: str) -> List[str]:
             "--static-tf must contain 9 comma-separated values: "
             "x,y,z,qx,qy,qz,qw,frame_id,child_frame_id"
         )
-    return items
+    x, y, z, qx, qy, qz, qw, frame_id, child_frame_id = items
+    return [
+        "--x",
+        x,
+        "--y",
+        y,
+        "--z",
+        z,
+        "--qx",
+        qx,
+        "--qy",
+        qy,
+        "--qz",
+        qz,
+        "--qw",
+        qw,
+        "--frame-id",
+        frame_id,
+        "--child-frame-id",
+        child_frame_id,
+    ]
 
 
 def quat_from_rpy(roll: float, pitch: float, yaw: float) -> Tuple[float, float, float, float]:
@@ -154,6 +174,64 @@ def read_initial_yaw_from_pose_topic(
     return float(node._yaw)
 
 
+def publish_initial_pose(
+    *,
+    topic: str,
+    frame_id: str,
+    pose: Tuple[float, float, float, float, float, float, float],
+    wait_subscriptions: int,
+    qos_depth: int = 1,
+    wait_timeout_sec: float = 10.0,
+    publish_count: int = 3,
+    publish_interval_sec: float = 0.2,
+) -> Tuple[bool, str]:
+    import rclpy
+    from geometry_msgs.msg import PoseStamped
+    from rclpy.node import Node
+    from rclpy.qos import QoSProfile
+
+    class InitialPosePublisher(Node):
+        def __init__(self) -> None:
+            super().__init__("initial_pose_publisher")
+            qos = QoSProfile(depth=max(1, int(qos_depth)))
+            self._pub = self.create_publisher(PoseStamped, topic, qos)
+
+    rclpy.init()
+    node = InitialPosePublisher()
+    logs: List[str] = []
+    success = False
+    try:
+        target_subs = max(0, int(wait_subscriptions))
+        deadline = time.time() + max(0.0, float(wait_timeout_sec))
+        matched = node._pub.get_subscription_count()
+        while rclpy.ok() and time.time() < deadline and matched < target_subs:
+            rclpy.spin_once(node, timeout_sec=0.1)
+            matched = node._pub.get_subscription_count()
+        logs.append(f"matched_subscriptions={matched}")
+
+        msg = PoseStamped()
+        msg.header.frame_id = frame_id
+        msg.pose.position.x = float(pose[0])
+        msg.pose.position.y = float(pose[1])
+        msg.pose.position.z = float(pose[2])
+        msg.pose.orientation.x = float(pose[3])
+        msg.pose.orientation.y = float(pose[4])
+        msg.pose.orientation.z = float(pose[5])
+        msg.pose.orientation.w = float(pose[6])
+
+        for idx in range(max(1, int(publish_count))):
+            node._pub.publish(msg)
+            logs.append(f"publishing #{idx + 1}: {msg}")
+            success = True
+            rclpy.spin_once(node, timeout_sec=0.05)
+            time.sleep(max(0.0, float(publish_interval_sec)))
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+    return success, "\n".join(logs) + "\n"
+
+
 def ros_value(v: object) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -181,6 +259,22 @@ def load_param_grid(grid_path: Path) -> Tuple[List[str], List[Tuple[object, ...]
         value_lists.append(values)
     combinations = list(itertools.product(*value_lists))
     return keys, combinations
+
+
+def configure_ros_domain_id(requested_domain_id: Optional[int]) -> int:
+    if requested_domain_id is not None:
+        domain_id = int(requested_domain_id)
+    else:
+        env_value = os.environ.get("ROS_DOMAIN_ID")
+        if env_value:
+            domain_id = int(env_value)
+        else:
+            # Pick a high domain id by default to reduce collisions with ambient ROS graphs.
+            domain_id = 180 + (os.getpid() % 40)
+    if domain_id < 0 or domain_id > 232:
+        raise ValueError(f"ROS domain id must be in [0, 232], got {domain_id}")
+    os.environ["ROS_DOMAIN_ID"] = str(domain_id)
+    return domain_id
 
 
 def start_background_process(name: str, cmd: Sequence[str], log_path: Path) -> ManagedProcess:
@@ -212,6 +306,112 @@ def stop_background_process(p: ManagedProcess, timeout_sec: float = 5.0) -> None
         p.log_fp.close()
 
 
+def prefetch_initial_yaw(args: argparse.Namespace, output_dir: Path) -> Tuple[float, Path]:
+    log_dir = output_dir / "_initial_yaw_prefetch"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    processes: List[ManagedProcess] = []
+    try:
+        if args.enable_navsatfix_to_pose:
+            conv_cmd = [
+                sys.executable,
+                str(NAVSATFIX_SCRIPT),
+                "--input-topic",
+                args.navsatfix_input_topic,
+                "--output-topic",
+                args.navsatfix_output_topic,
+                "--output-frame-id",
+                args.reference_frame_id,
+                "--qos-depth",
+                str(args.navsatfix_qos_depth),
+            ]
+            processes.append(
+                start_background_process(
+                    "navsatfix_to_pose", conv_cmd, log_dir / "navsatfix_to_pose.log"
+                )
+            )
+
+        if args.enable_applanix_to_pose:
+            apx_cmd = [
+                sys.executable,
+                str(APPLANIX_SCRIPT),
+                "--input-topic",
+                args.applanix_input_topic,
+                "--output-topic",
+                args.applanix_output_topic,
+                "--output-frame-id",
+                args.reference_frame_id,
+                "--qos-depth",
+                str(args.applanix_qos_depth),
+                "--orientation-mode",
+                str(args.applanix_orientation_mode),
+            ]
+            if args.applanix_origin_navsatfix_topic:
+                apx_cmd += [
+                    "--origin-navsatfix-topic",
+                    args.applanix_origin_navsatfix_topic,
+                    "--origin-navsatfix-qos-depth",
+                    str(args.applanix_origin_navsatfix_qos_depth),
+                ]
+            processes.append(
+                start_background_process(
+                    "applanix_to_pose", apx_cmd, log_dir / "applanix_to_pose.log"
+                )
+            )
+
+        if args.enable_applanix_to_imu:
+            imu_cmd = [
+                sys.executable,
+                str(GSOF49_TO_IMU_SCRIPT),
+                "--input-topic",
+                args.applanix_imu_input_topic,
+                "--output-topic",
+                args.applanix_imu_output_topic,
+                "--output-frame-id",
+                args.applanix_imu_output_frame_id,
+                "--qos-depth",
+                str(args.applanix_imu_qos_depth),
+                "--output-mode",
+                str(args.applanix_imu_output_mode),
+            ]
+            processes.append(
+                start_background_process("gsof49_to_imu", imu_cmd, log_dir / "gsof49_to_imu.log")
+            )
+
+        time.sleep(args.startup_sec)
+
+        play_cmd = [
+            "ros2",
+            "bag",
+            "play",
+            str(args.bag_path),
+            "--clock",
+            "--rate",
+            f"{args.play_rate:.12g}",
+        ]
+        if args.bag_start_offset_sec > 0.0:
+            play_cmd.extend(["--start-offset", f"{args.bag_start_offset_sec:.12g}"])
+        if args.play_topics:
+            play_cmd.extend(["--topics", *args.play_topics])
+        processes.append(start_background_process("bag_play", play_cmd, log_dir / "bag_play.log"))
+
+        yaw = read_initial_yaw_from_pose_topic(
+            topic=args.initial_yaw_source_topic,
+            msg_type=args.initial_yaw_source_msg_type,
+            timeout_sec=max(args.initial_yaw_timeout_sec, 1.0),
+            qos_depth=args.initial_yaw_qos_depth,
+        )
+        (log_dir / "initial_yaw.log").write_text(
+            f"yaw_deg={math.degrees(yaw):.6f}\n"
+            f"topic={args.initial_yaw_source_topic}\n",
+            encoding="utf-8",
+        )
+        return float(yaw), log_dir
+    finally:
+        for p in reversed(processes):
+            stop_background_process(p)
+
+
 def write_summary_csv(path: Path, rows: List[Dict[str, object]], fieldnames: List[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
@@ -230,11 +430,15 @@ def write_html_report(
     summary_csv: Path,
     ranking_csv: Path,
     ranking_nobias_csv: Path,
+    ranking_yaw_csv: Path,
+    ranking_attitude_csv: Path,
     best: Optional[Dict[str, object]],
     best_nobias: Optional[Dict[str, object]],
     keys: Sequence[str],
     successful_sorted: Sequence[Dict[str, object]],
     successful_nobias_sorted: Sequence[Dict[str, object]],
+    successful_yaw_sorted: Sequence[Dict[str, object]],
+    successful_attitude_sorted: Sequence[Dict[str, object]],
 ) -> Path:
     report_path = output_dir / f"{REPORT_NAME_PREFIX}_{stamp}.html"
 
@@ -376,6 +580,8 @@ def write_html_report(
     summary_rel = esc(rel(summary_csv))
     ranking_rel = esc(rel(ranking_csv))
     ranking_nb_rel = esc(rel(ranking_nobias_csv))
+    ranking_yaw_rel = esc(rel(ranking_yaw_csv))
+    ranking_att_rel = esc(rel(ranking_attitude_csv))
 
     best_html = kv_best_pair(best, best_nobias)
 
@@ -396,7 +602,9 @@ def write_html_report(
             f"param_grid_json: <code>{esc(param_grid_json)}</code><br/>"
             f"summary_csv: <a href=\"{summary_rel}\"><code>{summary_rel}</code></a><br/>"
             f"ranking_csv: <a href=\"{ranking_rel}\"><code>{ranking_rel}</code></a><br/>"
-            f"ranking_nobias_csv: <a href=\"{ranking_nb_rel}\"><code>{ranking_nb_rel}</code></a>"
+            f"ranking_nobias_csv: <a href=\"{ranking_nb_rel}\"><code>{ranking_nb_rel}</code></a><br/>"
+            f"ranking_yaw_csv: <a href=\"{ranking_yaw_rel}\"><code>{ranking_yaw_rel}</code></a><br/>"
+            f"ranking_attitude_csv: <a href=\"{ranking_att_rel}\"><code>{ranking_att_rel}</code></a>"
             "</p>",
             "<p class=\"sub\">"
             "<b>Best run selection:</b> first is best by <code>rmse_3d_m</code> "
@@ -411,6 +619,8 @@ def write_html_report(
             "</div>",
             top_table(successful_sorted, "Top 10 by rmse_3d_m"),
             top_table(successful_nobias_sorted, "Top 10 by rmse_3d_nobias_m"),
+            top_table(successful_yaw_sorted, "Top 10 by yaw_rmse_deg"),
+            top_table(successful_attitude_sorted, "Top 10 by attitude_angle_rmse_deg"),
             "</body>",
             "</html>",
         ]
@@ -593,6 +803,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-runs", type=int, default=0, help="0 means all combinations")
     p.add_argument("--run-prefix", default="run")
     p.add_argument(
+        "--ros-domain-id",
+        type=int,
+        default=None,
+        help=(
+            "ROS domain id used for the whole sweep. "
+            "If omitted, uses existing ROS_DOMAIN_ID or auto-selects an isolated high domain."
+        ),
+    )
+    p.add_argument(
         "--plot-best",
         action="store_true",
         default=False,
@@ -633,6 +852,7 @@ def main() -> int:
         return 2
 
     try:
+        ros_domain_id = configure_ros_domain_id(args.ros_domain_id)
         initial_pose = parse_initial_pose(args.initial_pose)
         static_tf_args = parse_static_tf_args(args.static_tf)
         keys, combinations = load_param_grid(args.param_grid_json)
@@ -649,16 +869,34 @@ def main() -> int:
     summary_path = args.output_dir / "summary.csv"
     ranking_path = args.output_dir / "ranking_by_rmse_3d.csv"
     ranking_nobias_path = args.output_dir / "ranking_by_rmse_3d_nobias.csv"
+    ranking_yaw_path = args.output_dir / "ranking_by_yaw_rmse_deg.csv"
+    ranking_attitude_path = args.output_dir / "ranking_by_attitude_angle_rmse_deg.csv"
 
     print(f"bag_path: {args.bag_path}")
     print(f"param_grid_json: {args.param_grid_json}")
     print(f"total_runs: {len(combinations)}")
     print(f"output_dir: {args.output_dir}")
+    print(f"ros_domain_id: {ros_domain_id}")
 
     rows: List[Dict[str, object]] = []
     cached_initial_yaw: Optional[float] = None
     cached_initial_yaw_label = ""
     cached_initial_yaw_deg = ""
+    if args.initial_yaw_source_topic:
+        try:
+            cached_initial_yaw, prefetch_log_dir = prefetch_initial_yaw(args, args.output_dir)
+            cached_initial_yaw_label = "yaw_init = yaw_poslv"
+            cached_initial_yaw_deg = f"{math.degrees(cached_initial_yaw):.6f}"
+            print(
+                "prefetched initial yaw "
+                f"{cached_initial_yaw_deg} deg from {args.initial_yaw_source_topic} "
+                f"(logs: {prefetch_log_dir})"
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            print(f"warning: could not prefetch initial yaw from topic: {e}")
+            cached_initial_yaw = None
+            cached_initial_yaw_label = ""
+            cached_initial_yaw_deg = ""
     fixed_ros_params = {
         "reference_frame_id": args.reference_frame_id,
         "robot_frame_id": args.robot_frame_id,
@@ -891,58 +1129,23 @@ def main() -> int:
                     encoding="utf-8",
                 )
 
-                pose_yaml = (
-                    "{header: {frame_id: '"
-                    + args.reference_frame_id
-                    + "'}, pose: {position: {x: "
-                    + f"{x}"
-                    + ", y: "
-                    + f"{y}"
-                    + ", z: "
-                    + f"{z}"
-                    + "}, orientation: {x: "
-                    + f"{qx}"
-                    + ", y: "
-                    + f"{qy}"
-                    + ", z: "
-                    + f"{qz}"
-                    + ", w: "
-                    + f"{qw}"
-                    + "}}}"
-                )
-                pub_cmd = [
-                    "ros2",
-                    "topic",
-                    "pub",
-                    "--once",
-                    "--wait-matching-subscriptions",
-                    str(args.initial_pose_wait_subscriptions),
-                    args.initial_pose_topic,
-                    "geometry_msgs/msg/PoseStamped",
-                    pose_yaml,
-                ]
                 try:
-                    pub_result = subprocess.run(
-                        pub_cmd,
-                        check=False,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=10,
+                    publish_ok, publish_log = publish_initial_pose(
+                        topic=args.initial_pose_topic,
+                        frame_id=args.reference_frame_id,
+                        pose=(x, y, z, qx, qy, qz, qw),
+                        wait_subscriptions=args.initial_pose_wait_subscriptions,
                     )
                     (run_dir / "initial_pose_pub.log").write_text(
-                        pub_result.stdout, encoding="utf-8"
+                        publish_log, encoding="utf-8"
                     )
-                    if pub_result.returncode != 0:
-                        print(
-                            f"  warning: initial pose publish failed (code={pub_result.returncode})"
-                        )
-                except subprocess.TimeoutExpired as e:
-                    timeout_text = e.stdout or ""
+                    if not publish_ok:
+                        print("  warning: initial pose publish failed")
+                except Exception as e:  # pylint: disable=broad-except
                     (run_dir / "initial_pose_pub.log").write_text(
-                        timeout_text + "\nTIMEOUT\n", encoding="utf-8"
+                        f"ERROR: {e}\n", encoding="utf-8"
                     )
-                    print("  warning: initial pose publish timed out")
+                    print(f"  warning: initial pose publish failed: {e}")
 
             play_proc.proc.wait()
             time.sleep(args.tail_sec)
@@ -1089,6 +1292,8 @@ def main() -> int:
 
     successful_sorted: List[Dict[str, object]] = []
     successful_nobias_sorted: List[Dict[str, object]] = []
+    successful_yaw_sorted: List[Dict[str, object]] = []
+    successful_attitude_sorted: List[Dict[str, object]] = []
     best: Optional[Dict[str, object]] = None
     best_nobias: Optional[Dict[str, object]] = None
 
@@ -1145,6 +1350,24 @@ def main() -> int:
         )
         if successful_nobias_sorted:
             write_summary_csv(ranking_nobias_path, successful_nobias_sorted, fieldnames)
+
+        successful_yaw = [
+            r for r in rows if r["status"] == "ok" and isinstance(r.get("yaw_rmse_deg"), (int, float))
+        ]
+        successful_yaw_sorted = sorted(successful_yaw, key=lambda r: float(r["yaw_rmse_deg"]))
+        if successful_yaw_sorted:
+            write_summary_csv(ranking_yaw_path, successful_yaw_sorted, fieldnames)
+
+        successful_attitude = [
+            r
+            for r in rows
+            if r["status"] == "ok" and isinstance(r.get("attitude_angle_rmse_deg"), (int, float))
+        ]
+        successful_attitude_sorted = sorted(
+            successful_attitude, key=lambda r: float(r["attitude_angle_rmse_deg"])
+        )
+        if successful_attitude_sorted:
+            write_summary_csv(ranking_attitude_path, successful_attitude_sorted, fieldnames)
 
         best = successful_sorted[0]
         best_nobias = successful_nobias_sorted[0] if successful_nobias_sorted else None
@@ -1222,6 +1445,10 @@ def main() -> int:
         print(f"ranking_csv: {ranking_path}")
     if ranking_nobias_path.exists():
         print(f"ranking_nobias_csv: {ranking_nobias_path}")
+    if ranking_yaw_path.exists():
+        print(f"ranking_yaw_csv: {ranking_yaw_path}")
+    if ranking_attitude_path.exists():
+        print(f"ranking_attitude_csv: {ranking_attitude_path}")
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     report_path = write_html_report(
         output_dir=args.output_dir,
@@ -1231,11 +1458,15 @@ def main() -> int:
         summary_csv=summary_path,
         ranking_csv=ranking_path,
         ranking_nobias_csv=ranking_nobias_path,
+        ranking_yaw_csv=ranking_yaw_path,
+        ranking_attitude_csv=ranking_attitude_path,
         best=best,
         best_nobias=best_nobias,
         keys=keys,
         successful_sorted=successful_sorted,
         successful_nobias_sorted=successful_nobias_sorted,
+        successful_yaw_sorted=successful_yaw_sorted,
+        successful_attitude_sorted=successful_attitude_sorted,
     )
     print(f"report_html: {report_path}")
     return 0

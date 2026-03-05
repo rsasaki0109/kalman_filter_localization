@@ -63,7 +63,17 @@ def generate_launch_description():
     tf = launch_ros.actions.Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        arguments=['0', '0', '0', '0', '0', '0', '1', robot_frame_id, imu_frame_id]
+        arguments=[
+            '--x', '0',
+            '--y', '0',
+            '--z', '0',
+            '--qx', '0',
+            '--qy', '0',
+            '--qz', '0',
+            '--qw', '1',
+            '--frame-id', robot_frame_id,
+            '--child-frame-id', imu_frame_id,
+        ],
         )
 
     return launch.LaunchDescription([

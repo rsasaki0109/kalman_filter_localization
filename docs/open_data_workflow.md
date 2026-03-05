@@ -20,6 +20,12 @@
    Convert Applanix GSOF49 to IMU.
 8. `tools/plot_pose_csv.py`  
    Plot XY trajectory and `z+RPY` time series.
+9. `tools/select_istanbul_profile.py`  
+   Pick the recommended Istanbul EKF profile from a bag path.
+10. `tools/run_istanbul_profile_validation.py`  
+   Run one selected Istanbul profile per bag and summarize drift / RMSE.
+11. `tools/run_istanbul_profile_validation_cron.sh`  
+   Cron-friendly wrapper around the validation job.
 
 Representative published results are shown in:
 
@@ -39,7 +45,7 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --output-dir /tmp/kfl_benchmark \
   --initial-yaw-source-topic /gnss_pose \
   --initial-yaw-source-msg-type pose_stamped \
-  --initial-yaw-timeout-sec 8.0
+  --initial-yaw-timeout-sec 20.0
 ```
 
 Output files:
@@ -47,6 +53,8 @@ Output files:
 - `summary.csv`: all runs + metrics
 - `ranking_by_rmse_3d.csv`
 - `ranking_by_rmse_3d_nobias.csv`
+- `ranking_by_yaw_rmse_deg.csv`
+- `ranking_by_attitude_angle_rmse_deg.csv`
 - `open_data_report_*.html` (single-bag sweep)
 
 If you need IMU-based attitude comparison, add `--attitude-reference-topic ... --attitude-reference-msg-type imu` and plot with `--plot-best`.
@@ -76,7 +84,7 @@ python3 src/kalman_filter_localization/tools/run_open_data_sweep.py \
   --attitude-min-speed-mps 0.0 \
   --initial-yaw-source-topic /ins_pose \
   --initial-yaw-source-msg-type pose_stamped \
-  --initial-yaw-timeout-sec 8.0 \
+  --initial-yaw-timeout-sec 20.0 \
   --plot-best \
   --enable-applanix-to-imu \
   --applanix-imu-output-topic /ins_imu \
@@ -144,7 +152,67 @@ Output files:
 - `open_data_suite_report_*.html`
 - `best_plots/*`
 
+## Istanbul profile ops
+
+Choose the recommended profile automatically:
+
+```bash
+python3 src/kalman_filter_localization/tools/select_istanbul_profile.py \
+  --bag-path data/istanbul/all-sensors-bag6_compressed
+```
+
+Validate the current shared + bag4-6 split with one run per bag:
+
+```bash
+ROS_LOG_DIR=/tmp/ros2_logs python3 src/kalman_filter_localization/tools/run_istanbul_profile_validation.py \
+  --output-dir /tmp/kfl_istanbul_profile_validation \
+  --bags all-sensors-bag1_compressed all-sensors-bag5_compressed all-sensors-bag6_compressed
+```
+
+The bag4-6 profile includes an extra GNSS-derived velocity update, while the
+shared bag1-3 profile keeps that observation disabled.
+
+Output files:
+
+- `profile_validation_summary.csv`
+- `kf_profile_validation_report.html`
+- `<bag>/selected_param_grid.json`
+- `<bag>/summary.csv`
+- `<bag>/open_data_report_*.html`
+- `<bag>/run_001/run_001_trajectory_xy.png`
+- `<bag>/run_001/run_001_timeseries_z_rpy.png`
+
+Run the same check in a cron-friendly way with built-in thresholds:
+
+```bash
+src/kalman_filter_localization/tools/run_istanbul_profile_validation_cron.sh
+```
+
+The wrapper:
+
+- creates a timestamped output dir under `/tmp/kfl_istanbul_profile_validation_runs/`
+- updates `/tmp/kfl_istanbul_profile_validation_runs/latest`
+- fails with non-zero exit code if any bag exceeds
+  `src/kalman_filter_localization/tools/istanbul_profile_validation_thresholds.json`
+
+Example crontab entry:
+
+```cron
+30 3 * * * cd gnssimu_kf_ros2_ws && \
+  src/kalman_filter_localization/tools/run_istanbul_profile_validation_cron.sh \
+  >> /tmp/kfl_istanbul_profile_validation_runs/cron.log 2>&1
+```
+
 ## Timestamp notes
 
 Some open datasets mix timestamp domains (e.g. Unix epoch vs GPS TOW).
 Scripts support `--time-normalize` / `--time-align` options.
+
+For compressed bags such as `all-sensors-bag1_compressed`, keep
+`--initial-yaw-timeout-sec` at `20.0` or higher. `ros2 bag play` may spend
+about 10 seconds decompressing before `/ins_pose` becomes available.
+
+`run_open_data_sweep.py` also auto-selects an isolated `ROS_DOMAIN_ID` unless
+you already exported one or passed `--ros-domain-id`. This avoids ambient
+publishers such as unrelated `/gnss/fix` sources from contaminating the bag-only
+evaluation graph.
