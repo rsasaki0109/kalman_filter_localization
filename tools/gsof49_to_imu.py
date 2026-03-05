@@ -138,6 +138,8 @@ class Gsof49ToImu(Node):
         self._config = config
         qos = QoSProfile(depth=config.qos_depth)
         self._pub = self.create_publisher(Imu, config.output_topic, qos)
+        self._previous_stamp_ns: int | None = None
+        self._warned_non_positive_stamp = False
         self.create_subscription(
             NavigationSolutionGsof49,
             config.input_topic,
@@ -174,6 +176,19 @@ class Gsof49ToImu(Node):
         imu_msg = Imu()
         imu_msg.header = msg.header
         imu_msg.header.frame_id = self._config.output_frame_id
+        stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+        if self._previous_stamp_ns is not None and stamp_ns <= self._previous_stamp_ns:
+            if not self._warned_non_positive_stamp:
+                self.get_logger().warn(
+                    f"Non-positive IMU dt detected (in_ts={msg.header.stamp.sec}.{msg.header.stamp.nanosec:09d} "
+                    f"prev_ts={self._previous_stamp_ns // 1_000_000_000}.{self._previous_stamp_ns % 1_000_000_000:09d}). "
+                    "Using previous+1ns instead."
+                )
+                self._warned_non_positive_stamp = True
+            stamp_ns = self._previous_stamp_ns + 1
+        imu_msg.header.stamp.sec = int(stamp_ns // 1_000_000_000)
+        imu_msg.header.stamp.nanosec = int(stamp_ns % 1_000_000_000)
+        self._previous_stamp_ns = stamp_ns
 
         if self._config.output_mode == "identity":
             imu_msg.orientation.w = 1.0

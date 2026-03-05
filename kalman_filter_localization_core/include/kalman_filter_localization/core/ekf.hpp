@@ -59,6 +59,7 @@ public:
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
     Eigen::Vector3d velocity{Eigen::Vector3d::Zero()};
     Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
+    Eigen::Vector3d gyro_bias{Eigen::Vector3d::Zero()};
   };
 
   enum class PredictionUpdateStatus : std::uint8_t
@@ -79,23 +80,27 @@ public:
   EKFEstimator()
   : previous_time_imu_(0.0),
     has_previous_time_imu_(false),
-    P_(EigenMatrix9d::Identity() * 100),
+    P_(EigenMatrixErrorState::Identity() * 100),
     var_imu_w_{0.33},
     var_imu_acc_{0.33},
+    var_imu_gyro_bias_{0.0},
     max_prediction_dt_sec_{0.5},
-    tau_gyro_bias_{1.0}
+    tau_gyro_bias_{3600.0}
   {
-    /* x  = [p v q] = [x y z vx vy vz qx qy qz qw] */
-    x_ << 0, 0, 0, 0, 0, 0, 0, 0, 0, 1;
+    /* x  = [p v q bg] = [x y z vx vy vz qx qy qz qw bgx bgy bgz] */
+    x_ << 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0;
+    // Keep gyro-bias estimation disabled by default until process noise is explicitly enabled.
+    P_.block<3, 3>(9, 9).setZero();
   }
 
 /* state
-* x  = [p v q] = [x y z vx vy vz qx qy qz qw]
-* dx = [dp dv dth] = [dx dy dz dvx dvy dvz dthx dthy dthz]
+* x  = [p v q bg] = [x y z vx vy vz qx qy qz qw bgx bgy bgz]
+* dx = [dp dv dth dbg] = [dx dy dz dvx dvy dvz dthx dthy dthz dbgx dbgy dbgz]
 *
 * pos_k = pos_{k-1} + vel_k * dt + (1/2) * (Rot(q_{k-1}) acc_{k-1}^{imu} - g) *dt^2
 * vel_k = vel_{k-1} + (Rot(quat_{k-1})) acc_{k-1}^{imu} - g) *dt
-* quat_k = Rot(w_{k-1}^{imu}*dt)*quat_{k-1}
+* quat_k = Rot((w_{k-1}^{imu} - bg_{k-1})*dt)*quat_{k-1}
+* bg_k = exp(-dt/tau_bg) * bg_{k-1} + noise
 *
 * covariance
 * P_{k} = F_k P_{k-1} F_k^T + L Q_k L^T
@@ -144,8 +149,11 @@ public:
       return PredictionUpdateStatus::kDtTooLarge;
     }
 
+    const Eigen::Vector3d gyro_bias = x_.segment(STATE::BGX, 3);
+    const Eigen::Vector3d unbiased_gyro = gyro - gyro_bias;
+
     // Integrate angular velocity using the exponential map.
-    const Eigen::Vector3d wdt = gyro * dt_imu;
+    const Eigen::Vector3d wdt = unbiased_gyro * dt_imu;
     const double wdt_norm = wdt.norm();
     const Eigen::Quaterniond quat_wdt =
       (wdt_norm > 0.0) ?
@@ -170,28 +178,36 @@ public:
     const Eigen::Quaterniond predicted_quat = (quat_wdt * previous_quat).normalized();
     x_.segment(STATE::QX, 4) = Eigen::Vector4d(
       predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
+    // gyro bias
+    const double bias_decay =
+      (tau_gyro_bias_ > 0.0 &&
+      std::isfinite(tau_gyro_bias_)) ? std::exp(-dt_imu / tau_gyro_bias_) : 1.0;
+    x_.segment(STATE::BGX, 3) = bias_decay * x_.segment(STATE::BGX, 3);
 
     // F
-    EigenMatrix9d F = EigenMatrix9d::Identity();
+    EigenMatrixErrorState F = EigenMatrixErrorState::Identity();
     F.block<3, 3>(0, 3) = dt_imu * Eigen::Matrix3d::Identity();
     Eigen::Matrix3d acc_skew;
     acc_skew <<
       0, -acc(2), acc(1),
       acc(2), 0, -acc(0),
       -acc(1), acc(0), 0;
-    F.block<3, 3>(3, 6) = rot_mat * (-acc_skew) * dt_imu;
+    F.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DTHX) = rot_mat * (-acc_skew) * dt_imu;
+    F.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DBGX) = -dt_imu * Eigen::Matrix3d::Identity();
+    F.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX) = bias_decay * Eigen::Matrix3d::Identity();
 
     // Q
-    Eigen::Matrix<double, 6, 6> Q = Eigen::Matrix<double, 6, 6>::Identity();
-    Q.block<3, 3>(0, 0) = var_imu_acc_ * Q.block<3, 3>(0, 0);
-    Q.block<3, 3>(3, 3) = var_imu_w_ * Q.block<3, 3>(3, 3);
-    Q = Q * (dt_imu * dt_imu);
+    Eigen::Matrix<double, 9, 9> Q = Eigen::Matrix<double, 9, 9>::Zero();
+    Q.block<3, 3>(0, 0) = var_imu_acc_ * Eigen::Matrix3d::Identity() * (dt_imu * dt_imu);
+    Q.block<3, 3>(3, 3) = var_imu_w_ * Eigen::Matrix3d::Identity() * (dt_imu * dt_imu);
+    Q.block<3, 3>(6, 6) = var_imu_gyro_bias_ * Eigen::Matrix3d::Identity() * dt_imu;
 
     // L
-    Eigen::Matrix<double, num_error_state_, 6> L =
-      Eigen::Matrix<double, num_error_state_, 6>::Zero();
-    L.block<3, 3>(3, 0) = Eigen::Matrix3d::Identity();
-    L.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
+    Eigen::Matrix<double, num_error_state_, 9> L =
+      Eigen::Matrix<double, num_error_state_, 9>::Zero();
+    L.block<3, 3>(ERROR_STATE::DVX, 0) = Eigen::Matrix3d::Identity();
+    L.block<3, 3>(ERROR_STATE::DTHX, 3) = Eigen::Matrix3d::Identity();
+    L.block<3, 3>(ERROR_STATE::DBGX, 6) = Eigen::Matrix3d::Identity();
 
     P_ = F * P_ * F.transpose() + L * Q * L.transpose();
     return PredictionUpdateStatus::kUpdated;
@@ -260,7 +276,7 @@ public:
     const Eigen::Matrix<double, num_error_state_, 1> dx = K * innov;
 
     applyErrorState(dx);
-    P_ = (EigenMatrix9d::Identity() - K * H) * P_;
+    P_ = (EigenMatrixErrorState::Identity() - K * H) * P_;
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -312,13 +328,69 @@ public:
 
     applyErrorState(dx);
 
-    P_ = (EigenMatrix9d::Identity() - K * H) * P_;
+    P_ = (EigenMatrixErrorState::Identity() - K * H) * P_;
+    return ObservationUpdateStatus::kUpdated;
+  }
+
+  void observationUpdateVelocity(
+    const Eigen::Vector3d & y,
+    const Eigen::Vector3d & variance
+  )
+  {
+    (void)observationUpdateVelocityWithStatus(y, variance);
+  }
+
+  ObservationUpdateStatus observationUpdateVelocityWithStatus(
+    const Eigen::Vector3d & y,
+    const Eigen::Vector3d & variance,
+    const bool propagate_cross_state = false
+  )
+  {
+    if (!y.allFinite()) {
+      return ObservationUpdateStatus::kInvalidMeasurement;
+    }
+    if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
+      return ObservationUpdateStatus::kInvalidVariance;
+    }
+
+    Eigen::Matrix3d R;
+    R <<
+      variance.x(), 0, 0,
+      0, variance.y(), 0,
+      0, 0, variance.z();
+
+    Eigen::Matrix<double, 3, num_error_state_> H =
+      Eigen::Matrix<double, 3, num_error_state_>::Zero();
+    H.block<3, 3>(0, ERROR_STATE::DVX) = Eigen::Matrix3d::Identity();
+    Eigen::Matrix<double, num_error_state_, 3> K =
+      Eigen::Matrix<double, num_error_state_, 3>::Zero();
+
+    if (propagate_cross_state) {
+      K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
+    } else {
+      const Eigen::Matrix3d P_vv = P_.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DVX);
+      K.block<3, 3>(ERROR_STATE::DVX, 0) = P_vv * (P_vv + R).inverse();
+    }
+
+    const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - x_.segment(STATE::VX, 3));
+
+    applyErrorState(dx);
+
+    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
+    const EigenMatrixErrorState A = I - K * H;
+    P_ = A * P_ * A.transpose() + K * R * K.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
     return ObservationUpdateStatus::kUpdated;
   }
 
   void setTauGyroBias(const double tau_gyro_bias)
   {
     tau_gyro_bias_ = tau_gyro_bias;
+  }
+
+  void setVarImuGyroBias(const double var_imu_gyro_bias)
+  {
+    var_imu_gyro_bias_ = var_imu_gyro_bias;
   }
 
   void setVarImuGyro(const double var_imu_w)
@@ -376,7 +448,7 @@ public:
   // Typed state accessors. These avoid leaking the internal state vector layout.
   void setPose(const Pose & pose)
   {
-    setState({pose.position, getVelocity(), pose.orientation});
+    setState({pose.position, getVelocity(), pose.orientation, getGyroBias()});
   }
 
   void setState(const State & state)
@@ -388,6 +460,7 @@ public:
     x_(STATE::QY) = q.y();
     x_(STATE::QZ) = q.z();
     x_(STATE::QW) = q.w();
+    x_.segment(STATE::BGX, 3) = state.gyro_bias;
   }
 
   Pose getPose() const
@@ -404,6 +477,7 @@ public:
     state.position = getPosition();
     state.velocity = getVelocity();
     state.orientation = getOrientation();
+    state.gyro_bias = getGyroBias();
     return state;
   }
 
@@ -420,6 +494,11 @@ public:
   Eigen::Quaterniond getOrientation() const
   {
     return Eigen::Quaterniond(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+  }
+
+  Eigen::Vector3d getGyroBias() const
+  {
+    return x_.segment(STATE::BGX, 3);
   }
 
   Eigen::VectorXd getX()
@@ -448,22 +527,24 @@ public:
   }
 
 private:
-  static const int num_state_{10};
-  static const int num_error_state_{9};
+  static const int num_state_{13};
+  static const int num_error_state_{12};
 
-  typedef Eigen::Matrix<double, num_error_state_, num_error_state_> EigenMatrix9d;
+  typedef Eigen::Matrix<double, num_error_state_, num_error_state_> EigenMatrixErrorState;
 
   enum STATE
   {
     X  = 0, Y = 1, Z = 2,
     VX = 3, VY = 4, VZ = 5,
     QX = 6, QY = 7, QZ = 8, QW = 9,
+    BGX = 10, BGY = 11, BGZ = 12,
   };
   enum ERROR_STATE
   {
     DX   = 0, DY = 1, DZ = 2,
     DVX  = 3, DVY = 4, DVZ = 5,
     DTHX = 6, DTHY = 7, DTHZ = 8,
+    DBGX = 9, DBGY = 10, DBGZ = 11,
   };
 
   void applyErrorState(const Eigen::Ref<const Eigen::Matrix<double, num_error_state_, 1>> & dx)
@@ -491,16 +572,20 @@ private:
     q.normalize();
     const Eigen::Quaterniond q_new = (q * dq).normalized();
     x_.segment(STATE::QX, 4) = Eigen::Vector4d(q_new.x(), q_new.y(), q_new.z(), q_new.w());
+
+    // gyro bias
+    x_.segment(STATE::BGX, 3) = x_.segment(STATE::BGX, 3) + dx.segment(ERROR_STATE::DBGX, 3);
   }
 
   double previous_time_imu_;
   bool has_previous_time_imu_;
   double var_imu_w_;
   double var_imu_acc_;
+  double var_imu_gyro_bias_;
   double max_prediction_dt_sec_;
 
   Eigen::Matrix<double, num_state_, 1> x_;
-  EigenMatrix9d P_;
+  EigenMatrixErrorState P_;
 
   Eigen::Vector3d gravity_{0.0, 0.0, 9.80665};
 
