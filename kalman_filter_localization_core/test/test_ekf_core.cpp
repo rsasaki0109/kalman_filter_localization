@@ -79,6 +79,104 @@ TEST(EKFEstimatorCore, ObservationUpdateValidation)
     EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
 }
 
+TEST(EKFEstimatorCore, ObservationUpdateVelocityValidationAndConvergence)
+{
+  EKFEstimator ekf;
+
+  const Eigen::Vector3d y_valid(1.5, -2.0, 0.25);
+  const Eigen::Vector3d variance_valid(1.0e-3, 1.0e-3, 1.0e-3);
+
+  EXPECT_EQ(
+    ekf.observationUpdateVelocityWithStatus(y_valid, variance_valid),
+    EKFEstimator::ObservationUpdateStatus::kUpdated);
+
+  const Eigen::Vector3d v_est = ekf.getVelocity();
+  EXPECT_NEAR(v_est.x(), y_valid.x(), 1e-3);
+  EXPECT_NEAR(v_est.y(), y_valid.y(), 1e-3);
+  EXPECT_NEAR(v_est.z(), y_valid.z(), 1e-3);
+
+  const Eigen::Vector3d variance_bad(0.0, 1.0, 1.0);
+  EXPECT_EQ(
+    ekf.observationUpdateVelocityWithStatus(y_valid, variance_bad),
+    EKFEstimator::ObservationUpdateStatus::kInvalidVariance);
+
+  Eigen::Vector3d y_bad = y_valid;
+  y_bad.y() = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(
+    ekf.observationUpdateVelocityWithStatus(y_bad, variance_valid),
+    EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
+}
+
+TEST(EKFEstimatorCore, ObservationUpdateVelocityKeepsOrientationWhenDecoupled)
+{
+  EKFEstimator ekf;
+  const Eigen::Vector3d gyro = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d acc(1.0, 2.0, 0.5);
+  EXPECT_EQ(
+    ekf.predictionUpdateDt(0.1, gyro, acc),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+
+  const Eigen::Quaterniond q_before = ekf.getOrientation().normalized();
+  const Eigen::Vector3d vel_meas(0.3, -0.2, 0.1);
+  const Eigen::Vector3d vel_var(1.0e-2, 1.0e-2, 1.0e-2);
+
+  EXPECT_EQ(
+    ekf.observationUpdateVelocityWithStatus(vel_meas, vel_var),
+    EKFEstimator::ObservationUpdateStatus::kUpdated);
+
+  const Eigen::Quaterniond q_after = ekf.getOrientation().normalized();
+  const double dot = std::abs(q_before.dot(q_after));
+  const double angle_err = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot)));
+  EXPECT_LT(angle_err, 1e-10);
+}
+
+TEST(EKFEstimatorCore, PredictionUpdateSubtractsGyroBias)
+{
+  EKFEstimator ekf;
+  EKFEstimator::State state;
+  state.gyro_bias = Eigen::Vector3d(0.0, 0.0, 0.1);
+  ekf.setState(state);
+
+  EXPECT_EQ(
+    ekf.predictionUpdateDt(
+      0.1, Eigen::Vector3d(0.0, 0.0, 0.1), Eigen::Vector3d::Zero()),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+
+  const Eigen::Quaterniond q_after = ekf.getOrientation().normalized();
+  const double dot = std::abs(Eigen::Quaterniond::Identity().dot(q_after));
+  const double angle_err = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot)));
+  EXPECT_LT(angle_err, 1e-10);
+  EXPECT_NEAR(ekf.getGyroBias().z(), 0.1, 1e-4);
+}
+
+TEST(EKFEstimatorCore, OrientationObservationCanEstimateGyroBias)
+{
+  EKFEstimator ekf;
+  ekf.setGravityZ(0.0);
+  ekf.setVarImuGyroBias(1.0e-4);
+  const Eigen::Vector3d gyro_meas(0.0, 0.0, 0.1);
+  const Eigen::Vector3d acc = Eigen::Vector3d::Zero();
+  const Eigen::Quaterniond q_meas = Eigen::Quaterniond::Identity();
+  const Eigen::Vector3d var_rpy(1.0e-4, 1.0e-4, 1.0e-4);
+
+  for (int i = 0; i < 300; ++i) {
+    EXPECT_EQ(
+      ekf.predictionUpdateDt(0.01, gyro_meas, acc),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+    EXPECT_EQ(
+      ekf.observationUpdateOrientationWithStatus(q_meas, var_rpy),
+      EKFEstimator::ObservationUpdateStatus::kUpdated);
+  }
+
+  const Eigen::Vector3d bias_est = ekf.getGyroBias();
+  EXPECT_GT(bias_est.z(), 1.0e-3);
+
+  const Eigen::Quaterniond q_est = ekf.getOrientation().normalized();
+  const double dot = std::abs(q_est.dot(q_meas));
+  const double angle_err = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot)));
+  EXPECT_LT(angle_err, 2.0e-2);
+}
+
 TEST(EKFEstimatorCore, ObservationUpdateOrientationValidationAndConvergence)
 {
   EKFEstimator ekf;

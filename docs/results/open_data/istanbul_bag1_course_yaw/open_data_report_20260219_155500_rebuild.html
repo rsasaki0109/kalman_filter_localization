@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>open_data_report_20260219_155500_rebuild</title>
+<style>
+    :root { color-scheme: light; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 8px 0; }
+    .sub { color: #333; margin: 0 0 18px 0; }
+    code { background: #f3f3f3; padding: 2px 6px; border-radius: 6px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    .subpanel { border: 1px dashed #ddd; border-radius: 10px; padding: 10px; margin-top: 10px; }
+    .panel { border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }
+    .imgs { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
+    img { width: 100%; height: auto; border: 1px solid #eee; border-radius: 10px; }
+    .missing { color: #888; font-style: italic; padding: 12px; border: 1px dashed #ccc; border-radius: 10px; }
+    table.top { border-collapse: collapse; width: 100%; }
+    table.top th, table.top td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+    table.top th { background: #fafafa; }
+    a { color: #0645ad; }
+    </style>
+</head>
+<body>
+<h1>Open-Data Report (20260219_155500_rebuild)</h1>
+<p class="sub">bag_path: <code>data/istanbul/all-sensors-bag1_uncompressed</code><br/>param_grid_json: <code>tools/param_grid_istanbul_quick.json</code><br/>summary_csv: <a href="summary.csv"><code>summary.csv</code></a><br/>ranking_csv: <a href="ranking_by_rmse_3d.csv"><code>ranking_by_rmse_3d.csv</code></a><br/>ranking_nobias_csv: <a href="ranking_by_rmse_3d_nobias.csv"><code>ranking_by_rmse_3d_nobias.csv</code></a></p>
+<p class="sub"><b>Best run selection:</b> first is best by <code>rmse_3d_m</code> (bias kept), second is best by <code>rmse_3d_nobias_m</code> (bias removed before RMSE).</p>
+<div class="grid">
+<div class="panel">
+<h2>Best Runs</h2>
+<div class="subpanel"><h3>Best by rmse_3d_m</h3>
+<div><b>run_id</b>: <code>rerun_006</code></div>
+<div><b>rmse_3d_m</b>: <code>0.03423046181574893</code></div>
+<div><b>rmse_3d_nobias_m</b>: <code>0.03261742265257234</code></div>
+<div><b>matched</b>: <code>995.0</code></div>
+<div><b>yaw_ref</b>: <code>gt_quat</code></div>
+<div><b>yaw_rmse_deg</b>: <code>0.0013064868144652421</code></div>
+<div><b>att_angle_rmse_deg</b>: <code>0.00869675310315869</code></div>
+<div><b>initial_yaw</b>: <code>yaw_init = yaw_poslv</code></div>
+<div><b>initial_yaw_deg</b>: <code>-50.194623</code></div>
+<div><b>params</b>: <code>{&#x27;gravity_mps2&#x27;: &#x27;0.0&#x27;, &#x27;use_imu_orientation&#x27;: &#x27;True&#x27;, &#x27;use_imu_orientation_covariance&#x27;: &#x27;True&#x27;, &#x27;var_imu_orientation_rpy&#x27;: &#x27;0.001&#x27;, &#x27;var_imu_w&#x27;: &#x27;0.005&#x27;, &#x27;var_imu_acc&#x27;: &#x27;0.05&#x27;, &#x27;var_gnss_xy&#x27;: &#x27;0.05&#x27;, &#x27;var_gnss_z&#x27;: &#x27;0.1&#x27;, &#x27;max_imu_dt_sec&#x27;: &#x27;1.0&#x27;}</code></div>
+<div class="imgs">
+<div class="missing">(missing)</div>
+<div class="missing">(missing)</div>
+</div>
+</div>
+</div>
+</div>
+<h3>Top 10 by rmse_3d_m</h3>
+<table class="top">
+<thead>
+<tr><th>rank</th><th>run_id</th><th>rmse_3d_m</th><th>rmse_3d_nobias_m</th><th>matched</th><th>yaw_rmse_deg</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><code>rerun_006</code></td><td><code>0.03423046181574893</code></td><td><code>0.03261742265257234</code></td><td><code>995.0</code></td><td><code>0.0013064868144652421</code></td></tr>
+<tr><td>2</td><td><code>rerun_010</code></td><td><code>0.933032177834055</code></td><td><code>0.9039492573482771</code></td><td><code>1957.0</code></td><td><code>0.009440053977872603</code></td></tr>
+<tr><td>3</td><td><code>rerun_018</code></td><td><code>0.07269076239531097</code></td><td><code>0.07113677490001263</code></td><td><code>1636.0</code></td><td><code>0.0017909260063853005</code></td></tr>
+<tr><td>4</td><td><code>rerun_023</code></td><td><code>0.20778348353779313</code></td><td><code>0.0821093047817914</code></td><td><code>1948.0</code></td><td><code>0.0027773506152927747</code></td></tr>
+<tr><td>5</td><td><code>rerun_025</code></td><td><code>0.16399051316697807</code></td><td><code>0.16176966355787348</code></td><td><code>2222.0</code></td><td><code>0.0033416643162344152</code></td></tr>
+<tr><td>6</td><td><code>rerun_033</code></td><td><code>7.7549990344867386</code></td><td><code>7.380062755622775</code></td><td><code>2028.0</code></td><td><code>0.05996508784495347</code></td></tr>
+<tr><td>7</td><td><code>rerun_036</code></td><td><code>4.720372348467196</code></td><td><code>1.0963710986495154</code></td><td><code>1487.0</code></td><td><code>0.015912702799294007</code></td></tr>
+<tr><td>8</td><td><code>rerun_044</code></td><td><code>4.53478908597396</code></td><td><code>3.943027688657746</code></td><td><code>1521.0</code></td><td><code>0.2660061600528882</code></td></tr>
+<tr><td>9</td><td><code>rerun_046</code></td><td><code>0.07275345642843974</code></td><td><code>0.07265753495389983</code></td><td><code>1498.0</code></td><td><code>0.003653211300108758</code></td></tr>
+<tr><td>10</td><td><code>rerun_048</code></td><td><code>0.07667798020087874</code></td><td><code>0.07218462676946488</code></td><td><code>1266.0</code></td><td><code>0.0006678947784694209</code></td></tr>
+</tbody>
+</table>
+<h3>Top 10 by rmse_3d_nobias_m</h3>
+<table class="top">
+<thead>
+<tr><th>rank</th><th>run_id</th><th>rmse_3d_m</th><th>rmse_3d_nobias_m</th><th>matched</th><th>yaw_rmse_deg</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><code>rerun_006</code></td><td><code>0.03423046181574893</code></td><td><code>0.03261742265257234</code></td><td><code>995.0</code></td><td><code>0.0013064868144652421</code></td></tr>
+<tr><td>2</td><td><code>rerun_010</code></td><td><code>0.933032177834055</code></td><td><code>0.9039492573482771</code></td><td><code>1957.0</code></td><td><code>0.009440053977872603</code></td></tr>
+<tr><td>3</td><td><code>rerun_018</code></td><td><code>0.07269076239531097</code></td><td><code>0.07113677490001263</code></td><td><code>1636.0</code></td><td><code>0.0017909260063853005</code></td></tr>
+<tr><td>4</td><td><code>rerun_023</code></td><td><code>0.20778348353779313</code></td><td><code>0.0821093047817914</code></td><td><code>1948.0</code></td><td><code>0.0027773506152927747</code></td></tr>
+<tr><td>5</td><td><code>rerun_025</code></td><td><code>0.16399051316697807</code></td><td><code>0.16176966355787348</code></td><td><code>2222.0</code></td><td><code>0.0033416643162344152</code></td></tr>
+<tr><td>6</td><td><code>rerun_033</code></td><td><code>7.7549990344867386</code></td><td><code>7.380062755622775</code></td><td><code>2028.0</code></td><td><code>0.05996508784495347</code></td></tr>
+<tr><td>7</td><td><code>rerun_036</code></td><td><code>4.720372348467196</code></td><td><code>1.0963710986495154</code></td><td><code>1487.0</code></td><td><code>0.015912702799294007</code></td></tr>
+<tr><td>8</td><td><code>rerun_044</code></td><td><code>4.53478908597396</code></td><td><code>3.943027688657746</code></td><td><code>1521.0</code></td><td><code>0.2660061600528882</code></td></tr>
+<tr><td>9</td><td><code>rerun_046</code></td><td><code>0.07275345642843974</code></td><td><code>0.07265753495389983</code></td><td><code>1498.0</code></td><td><code>0.003653211300108758</code></td></tr>
+<tr><td>10</td><td><code>rerun_048</code></td><td><code>0.07667798020087874</code></td><td><code>0.07218462676946488</code></td><td><code>1266.0</code></td><td><code>0.0006678947784694209</code></td></tr>
+</tbody>
+</table>
+</body>
+</html>
