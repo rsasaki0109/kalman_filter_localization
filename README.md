@@ -30,7 +30,15 @@ Output:
 
 ## Istanbul Evaluation
 
-Reference pose for the metrics and plots is `/ins_pose`, generated from Applanix POS LVX `GSOF49 /lvx_client/gsof/ins_solution_49` and exported as `ground_truth.csv` during validation.
+Reference topic depends on the bag contents:
+- Bags that contain Applanix `GSOF49 /lvx_client/gsof/ins_solution_49` but no pose topic:
+  convert that INS solution to a local ENU pose topic such as `/ins_pose`, then export it as `ground_truth.csv`.
+- Bags that already contain `/applanix/lvx_client/odom`:
+  use `/applanix/lvx_client/odom` directly as the reference pose.
+- For attitude-only reference on those bags:
+  use `/applanix/lvx_client/autoware_orientation`.
+
+The table and plots below use the first case: Istanbul open-data bags where reference pose was generated from Applanix POS LVX `GSOF49 /lvx_client/gsof/ins_solution_49` and exported as `ground_truth.csv`.
 
 Dataset links:
 - [Istanbul Open Dataset (Autoware Documentation)](https://autowarefoundation.github.io/autoware-documentation/main/datasets/#istanbul-open-dataset)
