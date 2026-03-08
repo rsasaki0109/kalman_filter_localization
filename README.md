@@ -32,6 +32,10 @@ Output:
 
 Reference pose for the metrics and plots is `/ins_pose`, generated from Applanix POS LVX `GSOF49 /lvx_client/gsof/ins_solution_49` and exported as `ground_truth.csv` during validation.
 
+Dataset links:
+- [Istanbul Open Dataset (Autoware Documentation)](https://autowarefoundation.github.io/autoware-documentation/main/datasets/#istanbul-open-dataset)
+- [ROS 2 bag folder used for these evaluations](https://drive.google.com/drive/folders/17zXiBeYlM90gQ5hV6EAWaoBTnNFoVPML?usp=drive_link)
+
 | Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] | Notes |
 |---|---|---:|---:|---|
 | bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 | Higher run-to-run variance |
