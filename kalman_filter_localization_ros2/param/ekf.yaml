@@ -1,0 +1,37 @@
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "gnss_pose"
+      imu_topic: "imu"
+      odom_topic: "odom"
+      pub_period: 10
+      var_imu_w: 0.01
+      var_imu_acc: 0.01
+      var_imu_gyro_bias: 0.0
+      tau_gyro_bias_sec: 3600.0
+      use_imu_orientation: false
+      use_imu_orientation_covariance: true
+      var_imu_orientation_rpy: 0.01
+      use_flat_ground: false
+      var_flat_ground_rp: 0.03
+      use_gnss_course_yaw: false
+      var_gnss_course_yaw: 0.05
+      min_gnss_course_distance_m: 1.0
+      min_gnss_course_speed_mps: 0.5
+      max_gnss_course_dt_sec: 1.0
+      max_gnss_course_dyaw_rad: 3.14159265358979323846
+      use_gnss_velocity: false
+      propagate_gnss_velocity_cross_state: true
+      var_gnss_velocity_xy: 0.25
+      var_gnss_velocity_z: 0.5
+      min_gnss_velocity_distance_m: 0.0
+      max_gnss_velocity_dt_sec: 1.0
+      max_gnss_velocity_innovation_mps: 5.0
+      max_imu_dt_sec: 20.0
+      gravity_mps2: 9.80665
+      var_gnss_xy: 0.1
+      var_gnss_z: 0.15
+      var_odom_xyz: 0.2
+      use_gnss: true
+      use_odom: false
