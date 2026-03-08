@@ -45,29 +45,6 @@ Note: `bag4` still shows larger run-to-run variance than `bag5-6`.
 
 ![Istanbul KF Timeseries Comparison](images/istanbul_kf_timeseries_compare_20260309.png)
 
-## Demo
-
-[rosbag demo data (ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
-
-```bash
-rviz2 -d src/kalman_filter_localization/rviz/ekfl_demo.rviz
-```
-
-```bash
-ros2 launch kalman_filter_localization ekf.launch.py
-```
-
-```bash
-ros2 topic pub ekf_localization/initial_pose geometry_msgs/PoseStamped '{header: {stamp: {sec: 1532228824, nanosec: 55000000}, frame_id: "map"}, pose: {position: {x: 0, y: 0, z: 10}, orientation: {z: 1, w: 0}}}' --once
-```
-
-```bash
-ros2 bag play -s rosbag_v2 test.bag
-```
-
-![demo](./images/demo_ekfl.gif)
-blue: initial pose, red: GNSS pose, green: fusion pose
-
 ## References
 
 - K Feng, "A New Quaternion-Based Kalman Filter", 2017
