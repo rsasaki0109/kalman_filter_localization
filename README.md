@@ -14,6 +14,26 @@ colcon build --symlink-install --packages-up-to kalman_filter_localization
 source install/setup.bash
 ```
 
+## Istanbul Results
+
+Latest Istanbul validation snapshot using the current split profile selection:
+
+- `bag1-3` -> shared Istanbul profile
+- `bag4` -> `istanbul_all_sensors_bag4.yaml`
+- `bag5-6` -> `istanbul_all_sensors_bag5_6.yaml`
+
+| Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] |
+| --- | --- | ---: | ---: |
+| bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 |
+| bag5 | `istanbul_all_sensors_bag5_6.yaml` | 0.043214 | 0.019029 |
+| bag6 | `istanbul_all_sensors_bag5_6.yaml` | 0.052227 | 0.048671 |
+
+`z + RPY` estimated-vs-reference comparison:
+
+![Istanbul KF Timeseries Comparison](images/istanbul_kf_timeseries_compare_20260309.png)
+
+Note: `bag4` still shows noticeably larger run-to-run variance than `bag5-6`.
+
 ## Docs
 
 - [Getting Started](docs/getting_started.md)
