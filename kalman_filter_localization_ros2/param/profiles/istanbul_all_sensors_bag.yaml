@@ -1,0 +1,32 @@
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      # Istanbul all-sensors bags appear to publish gravity-compensated acceleration.
+      # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
+      gravity_mps2: 0.0
+
+      # Istanbul IMU topic also provides a high-quality orientation estimate.
+      # Fuse it to stabilize roll/pitch/yaw.
+      use_imu_orientation: true
+      use_imu_orientation_covariance: true
+      var_imu_orientation_rpy: 0.001
+
+      # Cross-bag tuned starting point validated on Istanbul bags 1-6.
+      # This setting reduces average RMSE relative to the previous profile by
+      # leaning more on GNSS XY updates and reducing trust in IMU propagation.
+      var_imu_w: 0.02
+      var_imu_acc: 0.05
+      max_imu_dt_sec: 0.5
+      var_gnss_xy: 0.02
+      var_gnss_z: 0.1
+      use_gnss_velocity: false
+      var_odom_xyz: 0.2
+
+      use_gnss: true
+      use_odom: false
