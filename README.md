@@ -1,59 +1,56 @@
-# Kalman Filter Localization  
-Kalman Filter Localization  is a ros2 package of Kalman Filter Based Localization in 3D using GNSS/IMU/Odometry(Visual Odometry/Lidar Odometry).
+# Kalman Filter Localization
 
-## node
-ekf_localization_node
-- input  
-/initial_pose (geometry_msgs/PoseStamed)   
-/gnss_pose  (geometry_msgs/PoseStamed)   
-/imu  (sensor_msgs/Imu)  
-/odom (nav_msgs/Odometry)  
-/tf(/base_link(robot frame) → /imu_link(imu frame))  
-- output  
-/curent_pose (geometry_msgs/PoseStamped)
+Kalman Filter Localization is a ROS 2 package for 3D localization with GNSS, IMU, and odometry.
 
-## params
+## Node
+`ekf_localization_node`
 
-|Name|Type|Default value|Description|
-|---|---|---|---|
-|pub_period|int|10|publish period[ms]|
-|var_gnss_xy|double|0.1|variance of a gnss receiver about position xy[m^2]|
-|var_gnss_z|double|0.15|variance of a gnss receiver about position z[m^2]|
-|var_odom_xyz|double|0.1|variance of an odometry[m^2]|
-|var_imu_w|double|0.01|variance of an angular velocity sensor[(deg/sec)^2]|
-|var_imu_acc|double|0.01|variance of an accelerometer[(m/sec^2)^2]|
-|use_gnss|bool|true|whether gnss is used or not |
-|use_odom|bool|false|whether odom(lo/vo) is used or not |
+Input:
+- `/initial_pose` (`geometry_msgs/PoseStamped`)
+- `/gnss_pose` (`geometry_msgs/PoseStamped`)
+- `/imu` (`sensor_msgs/Imu`)
+- `/odom` (`nav_msgs/Odometry`)
+- `/tf` (`/base_link` -> `/imu_link`)
 
-## demo
+Output:
+- `/current_pose` (`geometry_msgs/PoseStamped`)
 
-[rosbag demo data(ROS1)](https://drive.google.com/file/d/1CYuip5dApvcF-xrB2f5s8pdBu7MGCDxP/view)
+## Params
 
-```
-rviz2 -d src/kalman_filter_localization/rviz/ekfl_demo.rviz
-```
+| Name | Type | Default value | Description |
+|---|---|---:|---|
+| `pub_period` | int | 10 | Publish period `[ms]` |
+| `var_gnss_xy` | double | 0.1 | GNSS position variance in XY `[m^2]` |
+| `var_gnss_z` | double | 0.15 | GNSS position variance in Z `[m^2]` |
+| `var_odom_xyz` | double | 0.1 | Odometry variance `[m^2]` |
+| `var_imu_w` | double | 0.01 | Angular velocity variance `[(deg/sec)^2]` |
+| `var_imu_acc` | double | 0.01 | Accelerometer variance `[(m/sec^2)^2]` |
+| `use_gnss` | bool | true | Whether GNSS is used |
+| `use_odom` | bool | false | Whether odometry is used |
 
-```
-ros2 launch kalman_filter_localization ekf.launch.py
-```
+## Istanbul Evaluation
 
-```
-ros2 topic pub ekf_localization/initial_pose geometry_msgs/PoseStamped '{header: {stamp: {sec: 1532228824, nanosec: 55000000}, frame_id: "map"}, pose: {position: {x: 0, y: 0, z: 10}, orientation: {z: 1, w: 0}}}' --once
-```
+Latest Istanbul split used for validation:
+- `bag1-3`: shared profile
+- `bag4`: `kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag4.yaml`
+- `bag5-6`: `kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag5_6.yaml`
 
-```
-ros2 bag play -s rosbag_v2 test.bag
-```
+GT pose in the table and plot means the reference trajectory from the bag topic `/ins_pose`, exported as `ground_truth.csv` during validation.
 
+| Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] |
+|---|---|---:|---:|
+| bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 |
+| bag5 | `istanbul_all_sensors_bag5_6.yaml` | 0.043214 | 0.019029 |
+| bag6 | `istanbul_all_sensors_bag5_6.yaml` | 0.052227 | 0.048671 |
 
-![demo](./images/demo_ekfl.gif)    
-blue:initial pose, red:gnss pose, green: fusion pose
+Note: `bag4` still shows larger run-to-run variance than `bag5-6`.
 
-## references
+![Istanbul KF Timeseries Comparison](images/istanbul_kf_timeseries_compare_20260309.png)
 
-- K Feng,"A New Quaternion-Based Kalman Filter",2017
-- Joan Solà,"Quaternion kinematics for the error-state Kalman filter",2017
-- Daniel Choukroun et al,"A Novel Quaternion Kalman Filter",2006
-- An Improved EKF - The Error State Extended Kalman Filter
-- Weikun Zhen, Sam Zeng, and Sebastian Scherer. "Robust Localization and Localizability Estimation with a Rotating Laser Scanner" , 2017.
+## References
 
+- K Feng, "A New Quaternion-Based Kalman Filter", 2017
+- Joan Sola, "Quaternion kinematics for the error-state Kalman filter", 2017
+- Daniel Choukroun et al, "A Novel Quaternion Kalman Filter", 2006
+- "An Improved EKF - The Error State Extended Kalman Filter"
+- Weikun Zhen, Sam Zeng, and Sebastian Scherer, "Robust Localization and Localizability Estimation with a Rotating Laser Scanner", 2017

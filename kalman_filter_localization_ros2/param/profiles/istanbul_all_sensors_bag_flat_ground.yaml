@@ -1,0 +1,37 @@
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      # Istanbul all-sensors bags appear to publish gravity-compensated acceleration.
+      # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
+      gravity_mps2: 0.0
+
+      # Do NOT fuse IMU orientation; instead apply a soft flat-ground constraint to keep
+      # roll/pitch bounded.
+      use_imu_orientation: false
+      use_flat_ground: true
+      var_flat_ground_rp: 0.03
+
+      # Stabilize yaw using GNSS course (requires sufficient motion).
+      use_gnss_course_yaw: true
+      var_gnss_course_yaw: 0.05
+      min_gnss_course_distance_m: 1.0
+      min_gnss_course_speed_mps: 0.5
+      max_gnss_course_dt_sec: 1.0
+      max_gnss_course_dyaw_rad: 0.6
+
+      # Tuned starting point (see tools/param_grid_istanbul_quick.json).
+      var_imu_w: 0.005
+      var_imu_acc: 0.01
+      max_imu_dt_sec: 1.0
+      var_gnss_xy: 0.05
+      var_gnss_z: 0.1
+      var_odom_xyz: 0.2
+
+      use_gnss: true
+      use_odom: false

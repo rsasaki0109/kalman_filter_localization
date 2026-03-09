@@ -1,0 +1,35 @@
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      # Istanbul all-sensors bags appear to publish gravity-compensated acceleration.
+      # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
+      gravity_mps2: 0.0
+
+      # Legacy alias kept for compatibility. The actively selected dedicated
+      # profile is `istanbul_all_sensors_bag4_6.yaml`.
+      use_imu_orientation: true
+      use_imu_orientation_covariance: true
+      var_imu_orientation_rpy: 0.0015
+
+      var_imu_w: 0.02
+      var_imu_acc: 0.05
+      max_imu_dt_sec: 0.5
+      var_gnss_xy: 0.02
+      var_gnss_z: 0.1
+      # Bags 5-6 benefit from an additional GNSS-derived world-velocity update.
+      use_gnss_velocity: true
+      var_gnss_velocity_xy: 0.02
+      var_gnss_velocity_z: 0.5
+      min_gnss_velocity_distance_m: 0.05
+      max_gnss_velocity_dt_sec: 1.0
+      max_gnss_velocity_innovation_mps: 5.0
+      var_odom_xyz: 0.2
+
+      use_gnss: true
+      use_odom: false
