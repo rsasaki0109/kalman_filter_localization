@@ -30,22 +30,21 @@ Output:
 
 ## Istanbul Evaluation
 
-Latest Istanbul split used for validation:
-- `bag1-3`: shared profile
-- `bag4`: `kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag4.yaml`
-- `bag5-6`: `kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag5_6.yaml`
+Reference pose for the metrics and plots is `/ins_pose`, generated from Applanix POS LVX `GSOF49 /lvx_client/gsof/ins_solution_49` and exported as `ground_truth.csv` during validation.
 
-GT pose in the table and plot means the reference trajectory from the bag topic `/ins_pose`, exported as `ground_truth.csv` during validation.
+| Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] | Notes |
+|---|---|---:|---:|---|
+| bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 | Higher run-to-run variance |
+| bag5 | `istanbul_all_sensors_bag5_6.yaml` | 0.043214 | 0.019029 | Dedicated bag5-6 profile |
+| bag6 | `istanbul_all_sensors_bag5_6.yaml` | 0.052227 | 0.048671 | Dedicated bag5-6 profile |
 
-| Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] |
-|---|---|---:|---:|
-| bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 |
-| bag5 | `istanbul_all_sensors_bag5_6.yaml` | 0.043214 | 0.019029 |
-| bag6 | `istanbul_all_sensors_bag5_6.yaml` | 0.052227 | 0.048671 |
-
-Note: `bag4` still shows larger run-to-run variance than `bag5-6`.
+`z + RPY` estimated-vs-reference comparison:
 
 ![Istanbul KF Timeseries Comparison](images/istanbul_kf_timeseries_compare_20260309.png)
+
+`XY trajectory` estimated-vs-reference comparison:
+
+![Istanbul KF XY Comparison](images/istanbul_kf_xy_compare_20260309.png)
 
 ## References
 
