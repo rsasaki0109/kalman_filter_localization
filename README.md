@@ -50,13 +50,9 @@ Dataset links:
 | bag5 | `istanbul_all_sensors_bag5_6.yaml` | 0.043214 | 0.019029 | Dedicated bag5-6 profile |
 | bag6 | `istanbul_all_sensors_bag5_6.yaml` | 0.052227 | 0.048671 | Dedicated bag5-6 profile |
 
-`z + RPY` estimated-vs-reference comparison:
+Representative single-bag comparison for `bag5`:
 
-![Istanbul KF Timeseries Comparison](images/istanbul_kf_timeseries_compare_20260309.png)
-
-`XY trajectory` estimated-vs-reference comparison:
-
-![Istanbul KF XY Comparison](images/istanbul_kf_xy_compare_20260309.png)
+![Istanbul bag5 KF Comparison](images/istanbul_bag5_kf_compare_20260309.png)
 
 ## References
 
