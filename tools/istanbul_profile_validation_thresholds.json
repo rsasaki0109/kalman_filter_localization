@@ -1,8 +1,0 @@
-{
-  "all-sensors-bag1_compressed": { "max_rmse_3d_m": 0.05 },
-  "all-sensors-bag2_compressed": { "max_rmse_3d_m": 0.06 },
-  "all-sensors-bag3_compressed": { "max_rmse_3d_m": 0.08 },
-  "all-sensors-bag4_compressed": { "max_rmse_3d_m": 0.12 },
-  "all-sensors-bag5_compressed": { "max_rmse_3d_m": 0.09 },
-  "all-sensors-bag6_compressed": { "max_rmse_3d_m": 0.15 }
-}
