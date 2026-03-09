@@ -35,6 +35,8 @@ Latest Istanbul split used for validation:
 - `bag4`: `kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag4.yaml`
 - `bag5-6`: `kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag5_6.yaml`
 
+GT pose in the table and plot means the reference trajectory from the bag topic `/ins_pose`, exported as `ground_truth.csv` during validation.
+
 | Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] |
 |---|---|---:|---:|
 | bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 |
