@@ -34,7 +34,7 @@
 
 #include <limits>
 
-#include <kalman_filter_localization/core/ekf.hpp>
+#include <kalman_filter_localization/core/ekf_estimator.hpp>
 
 TEST(EKFEstimatorCore, PredictionUpdateDtStatus)
 {

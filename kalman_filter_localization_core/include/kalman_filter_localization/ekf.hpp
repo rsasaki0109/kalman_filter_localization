@@ -32,9 +32,8 @@
 #ifndef KALMAN_FILTER_LOCALIZATION__EKF_HPP_
 #define KALMAN_FILTER_LOCALIZATION__EKF_HPP_
 
-// Compatibility header:
-// Keep the original include path while moving the implementation into a
-// ROS2-independent header.
-#include <kalman_filter_localization/core/ekf.hpp>
+// Public EKF header.
+// The ROS2-independent implementation lives in core/ekf_estimator.hpp.
+#include <kalman_filter_localization/core/ekf_estimator.hpp>
 
 #endif  // KALMAN_FILTER_LOCALIZATION__EKF_HPP_
