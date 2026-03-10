@@ -47,7 +47,7 @@ Dataset links:
 Representative run shown below:
 - `bag`: `all-sensors-bag5_compressed`
 - `initial yaw`: `/ins_pose` yaw only (`yaw_init = yaw_poslv`)
-- `imu_topic`: `/ins_imu` converted from Applanix `GSOF49`
+- `imu_topic`: `/sensing/imu/imu_data`
 - `use_imu_orientation`: `false`
 - `gnss_pose_topic`: `/gnss_pose` converted from `/gnss/fix`
 - `use_gnss_velocity`: `true`
@@ -56,11 +56,11 @@ Representative run shown below:
 
 | Run | RMSE 3D [m] | Yaw RMSE [deg] | Notes |
 |---|---:|---:|---|
-| bag5 representative | 0.123818 | 4.751014 | POSLV yaw init only, IMU orientation fusion disabled |
+| bag5 representative | 0.105571 | 4.872169 | POSLV yaw init only, raw IMU used, IMU orientation fusion disabled |
 
 Representative single-bag comparison for `bag5`:
 
-![Istanbul bag5 KF Comparison](images/istanbul_bag5_kf_compare_no_imu_orientation_20260311.png)
+![Istanbul bag5 KF Comparison](images/istanbul_bag5_kf_compare_raw_imu_no_orientation_20260311.png)
 
 ## References
 
