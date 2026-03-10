@@ -54,6 +54,36 @@ Representative run shown below:
 - `use_odom`: `false`
 - `reference pose`: `/ins_pose`
 
+```mermaid
+flowchart LR
+  bag["ROS bag"]
+
+  subgraph Estimation["EKF estimation path"]
+    gnss_fix["/gnss/fix"]
+    gnss_pose["/gnss_pose"]
+    gnss_vel["GNSS velocity derived from /gnss_pose"]
+    raw_imu["/sensing/imu/imu_data"]
+    ekf["EKF"]
+    ekf_out["/ekf_localization/current_pose"]
+    init_yaw["initial yaw only"]
+  end
+
+  subgraph Reference["Evaluation path"]
+    gsof49["/lvx_client/gsof/ins_solution_49"]
+    ins_pose["/ins_pose"]
+    evaluator["trajectory evaluation"]
+  end
+
+  bag --> gnss_fix --> gnss_pose --> ekf
+  gnss_pose --> gnss_vel --> ekf
+  bag --> raw_imu --> ekf
+  bag --> gsof49 --> ins_pose
+  ins_pose -. yaw initialization only .-> init_yaw --> ekf
+  ekf_out --> evaluator
+  ekf --> ekf_out
+  ins_pose --> evaluator
+```
+
 | Run | RMSE 3D [m] | Yaw RMSE [deg] | Notes |
 |---|---:|---:|---|
 | bag5 representative | 0.105571 | 4.872169 | POSLV yaw init only, raw IMU used, IMU orientation fusion disabled |
