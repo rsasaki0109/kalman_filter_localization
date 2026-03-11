@@ -44,15 +44,23 @@ Dataset links:
 - [Istanbul Open Dataset (Autoware Documentation)](https://autowarefoundation.github.io/autoware-documentation/main/datasets/#istanbul-open-dataset)
 - [ROS 2 bag folder used for these evaluations](https://drive.google.com/drive/folders/17zXiBeYlM90gQ5hV6EAWaoBTnNFoVPML?usp=drive_link)
 
-| Bag | Profile | RMSE 3D [m] | Yaw RMSE [deg] | Notes |
-|---|---|---:|---:|---|
-| bag4 | `istanbul_all_sensors_bag4.yaml` | 0.091574 | 0.064264 | Higher run-to-run variance |
-| bag5 | `istanbul_all_sensors_bag5_6.yaml` | 0.043214 | 0.019029 | Dedicated bag5-6 profile |
-| bag6 | `istanbul_all_sensors_bag5_6.yaml` | 0.052227 | 0.048671 | Dedicated bag5-6 profile |
+Representative run shown below:
+- `bag`: `all-sensors-bag5_compressed`
+- `initial yaw`: `/ins_pose` yaw only (`yaw_init = yaw_poslv`)
+- `imu_topic`: `/ins_imu` converted from Applanix `GSOF49`
+- `use_imu_orientation`: `false`
+- `gnss_pose_topic`: `/gnss_pose` converted from `/gnss/fix`
+- `use_gnss_velocity`: `true`
+- `use_odom`: `false`
+- `reference pose`: `/ins_pose`
+
+| Run | RMSE 3D [m] | Yaw RMSE [deg] | Notes |
+|---|---:|---:|---|
+| bag5 representative | 0.123818 | 4.751014 | POSLV yaw init only, IMU orientation fusion disabled |
 
 Representative single-bag comparison for `bag5`:
 
-![Istanbul bag5 KF Comparison](images/istanbul_bag5_kf_compare_20260309.png)
+![Istanbul bag5 KF Comparison](images/istanbul_bag5_kf_compare_no_imu_orientation_20260311.png)
 
 ## References
 
