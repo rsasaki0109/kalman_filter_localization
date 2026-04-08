@@ -32,7 +32,7 @@ ekf_localization:
       # Tighter than before (0.05 -> 0.03 rad^2): the vehicle is on a road,
       # and tighter roll/pitch prevents accel-driven position drift coupling
       # through misaligned gravity.
-      var_flat_ground_rp: 0.03
+      var_flat_ground_rp: 0.05
 
       # --- IMU process noise ---
       # var_imu_w: gyro noise variance used in Q.
@@ -41,7 +41,7 @@ ekf_localization:
       # datasheet floor -- to allow for vibration and mounting, but much
       # tighter than the old 0.02.  Trusting the gyro more reduces yaw drift
       # between 1-Hz GNSS updates.
-      var_imu_w: 0.005
+      var_imu_w: 0.01
 
       # var_imu_acc: accel noise variance used in Q.
       # Previous: 0.05.  ADIS16460 VRW squared at ~200 Hz is ~(0.025)^2*200
@@ -87,7 +87,7 @@ ekf_localization:
       # RTK-fixed but too tight for RTK-float or degraded conditions.
       # Slightly relax to 0.06 (~25 cm) to avoid the filter over-weighting
       # occasional noisy fixes that cause jumps.
-      var_gnss_xy: 0.06
+      var_gnss_xy: 0.04
       var_gnss_z: 0.15
 
       # GNSS velocity: disabled (1 Hz position-only; finite-difference
