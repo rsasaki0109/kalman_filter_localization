@@ -1,10 +1,3 @@
-# PPC-Dataset baseline profile (https://github.com/taroz/PPC-Dataset).
-# Keep this file only for historical comparison against the newer
-# ppc_dataset_adis16505_tuned.yaml default.
-# New PPC evaluations should use the tuned profile unless a baseline rerun is
-# explicitly needed.
-# ~1 Hz GNSS from RTKLIB post-processing; no direct velocity topic.
-# Based on i2nav_whu_adis16460_course_yaw.yaml — adjust variances per run.
 ekf_localization:
     ros__parameters:
       reference_frame_id: "map"
@@ -14,7 +7,7 @@ ekf_localization:
       odom_topic: "/odom"
       pub_period: 10
 
-      gravity_mps2: 9.80665
+      gravity_mps2: 0.0
       use_imu_orientation: false
       use_flat_ground: true
       var_flat_ground_rp: 0.05
@@ -27,6 +20,7 @@ ekf_localization:
 
       var_gnss_xy: 0.04
       var_gnss_z: 0.15
+      # i2Nav GNSS_RTK.pos is ~1 Hz — gnss-velocity updates are often harmful.
       use_gnss_velocity: false
       propagate_gnss_velocity_cross_state: true
       var_gnss_velocity_xy: 0.02
@@ -34,12 +28,6 @@ ekf_localization:
       min_gnss_velocity_distance_m: 0.05
       max_gnss_velocity_dt_sec: 1.0
       max_gnss_velocity_innovation_mps: 5.0
-
-      use_gnss_course_yaw: true
-      var_gnss_course_yaw: 0.08
-      min_gnss_course_distance_m: 0.35
-      min_gnss_course_speed_mps: 0.2
-      max_gnss_course_dt_sec: 2.2
 
       var_odom_xyz: 0.2
       use_gnss: true
