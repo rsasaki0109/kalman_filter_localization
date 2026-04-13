@@ -1,10 +1,4 @@
-# PPC-Dataset baseline profile (https://github.com/taroz/PPC-Dataset).
-# Keep this file only for historical comparison against the newer
-# ppc_dataset_adis16505_tuned.yaml default.
-# New PPC evaluations should use the tuned profile unless a baseline rerun is
-# explicitly needed.
-# ~1 Hz GNSS from RTKLIB post-processing; no direct velocity topic.
-# Based on i2nav_whu_adis16460_course_yaw.yaml — adjust variances per run.
+# Base i2nav profile + GNSS course yaw only (minimal change).
 ekf_localization:
     ros__parameters:
       reference_frame_id: "map"
@@ -14,7 +8,7 @@ ekf_localization:
       odom_topic: "/odom"
       pub_period: 10
 
-      gravity_mps2: 9.80665
+      gravity_mps2: 0.0
       use_imu_orientation: false
       use_flat_ground: true
       var_flat_ground_rp: 0.05

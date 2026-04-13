@@ -1,0 +1,36 @@
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      # Default: assume IMU reports specific force in ROS FLU base_link after any --flip-imu-yz step.
+      gravity_mps2: 9.80665
+
+      use_imu_orientation: false
+      use_flat_ground: true
+      var_flat_ground_rp: 0.05
+
+      var_imu_w: 0.02
+      var_imu_acc: 0.05
+      var_imu_acc_bias: 1.0e-8
+      tau_acc_bias_sec: 3600.0
+      max_imu_dt_sec: 0.5
+
+      var_gnss_xy: 2.0
+      var_gnss_z: 4.0
+
+      use_gnss_velocity: true
+      propagate_gnss_velocity_cross_state: true
+      var_gnss_velocity_xy: 0.5
+      var_gnss_velocity_z: 1.0
+      min_gnss_velocity_distance_m: 0.5
+      max_gnss_velocity_dt_sec: 2.0
+      max_gnss_velocity_innovation_mps: 10.0
+
+      var_odom_xyz: 0.2
+      use_gnss: true
+      use_odom: false
