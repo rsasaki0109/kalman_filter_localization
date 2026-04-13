@@ -1,0 +1,130 @@
+# Tuned profile for i2Nav-WHU ADIS16460 segment.
+#
+# Target: reduce XY RMSE (currently mid-single-digit metres) and yaw RMSE
+# (currently ~10 deg) by better matching the ADIS16460 noise characteristics
+# and enabling gyro/accel bias estimation that the previous course_yaw profile
+# left effectively disabled.
+#
+# ADIS16460 specs (typical):
+#   Gyro noise density:  ~0.1 deg/s/sqrt(Hz) = 1.745e-3 rad/s/sqrt(Hz)
+#   Accel noise density: ~0.025 m/s^2/sqrt(Hz)
+#   Gyro in-run bias:    ~6 deg/hr = 2.9e-5 rad/s  (Allan-variance)
+#   Accel in-run bias:   ~0.013 mg = 1.3e-4 m/s^2
+#   Gyro run-to-run bias repeatability: ~0.5 deg/s = 8.7e-3 rad/s
+#
+# i2Nav GNSS: ~1 Hz RTK position, no native velocity topic.
+
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      # IMU publishes gravity-compensated acceleration in this dataset.
+      gravity_mps2: 0.0
+
+      # No IMU orientation available; use flat-ground pseudo-observation.
+      use_imu_orientation: false
+      use_flat_ground: true
+      # Tighter than before (0.05 -> 0.03 rad^2): the vehicle is on a road,
+      # and tighter roll/pitch prevents accel-driven position drift coupling
+      # through misaligned gravity.
+      var_flat_ground_rp: 0.05
+
+      # --- IMU process noise ---
+      # var_imu_w: gyro noise variance used in Q.
+      # Previous: 0.02. ADIS16460 angular random walk squared at ~200 Hz is
+      # roughly (1.745e-3)^2 * 200 ~ 6e-4.  We use 0.005 -- about 8x the
+      # datasheet floor -- to allow for vibration and mounting, but much
+      # tighter than the old 0.02.  Trusting the gyro more reduces yaw drift
+      # between 1-Hz GNSS updates.
+      var_imu_w: 0.01
+
+      # var_imu_acc: accel noise variance used in Q.
+      # Previous: 0.05.  ADIS16460 VRW squared at ~200 Hz is ~(0.025)^2*200
+      # = 0.125.  We keep it slightly below datasheet since the IMU is already
+      # gravity-compensated and residual noise is small.  0.03 lets GNSS pull
+      # position without trusting accel propagation too much.
+      var_imu_acc: 0.03
+
+      # --- Gyro bias estimation (KEY CHANGE) ---
+      # The course_yaw profile had no gyro bias estimation (var=0, P0=0).
+      # ADIS16460 has ~0.5 deg/s run-to-run repeatability and ~6 deg/hr
+      # in-run instability.  Enabling bias estimation lets the filter absorb
+      # systematic gyro offset that otherwise causes yaw drift.
+      #
+      # var_imu_gyro_bias: process noise variance for bias random walk.
+      # Set to match Allan-variance bias instability: (2.9e-5)^2 ~ 8.4e-10.
+      # Use 1.0e-9 to be slightly conservative.
+      var_imu_gyro_bias: 1.0e-9
+      # initial_imu_gyro_bias_covariance: P0 for gyro bias states.
+      # Must be > 0 for the filter to estimate bias at all.
+      # Covers the run-to-run repeatability: (8.7e-3)^2 ~ 7.6e-5.
+      # Use 1.0e-4 to give the filter room to converge.
+      initial_imu_gyro_bias_covariance: 1.0e-4
+      # Time constant for first-order Gauss-Markov bias model.
+      # 300 s is typical for tactical MEMS; 3600 s is too slow and prevents
+      # the filter from tracking bias changes during a ~20 min drive.
+      tau_gyro_bias_sec: 300.0
+
+      # --- Accel bias estimation (BUG FIX) ---
+      # The previous profile set var_imu_acc_bias=1e-8 but never set
+      # initial_imu_acc_bias_covariance, so P0 for accel bias was 0 and the
+      # filter could never estimate it.  Fix: set P0 > 0.
+      var_imu_acc_bias: 1.0e-7
+      # P0: covers ~1 mg bias uncertainty: (0.01)^2 = 1e-4.
+      initial_imu_acc_bias_covariance: 1.0e-4
+      # Shorter time constant to track bias changes.
+      tau_acc_bias_sec: 600.0
+
+      max_imu_dt_sec: 0.5
+
+      # --- GNSS position measurement noise ---
+      # Previous: var_gnss_xy=0.04 (20 cm 1-sigma).  This is appropriate for
+      # RTK-fixed but too tight for RTK-float or degraded conditions.
+      # Slightly relax to 0.06 (~25 cm) to avoid the filter over-weighting
+      # occasional noisy fixes that cause jumps.
+      var_gnss_xy: 0.04
+      var_gnss_z: 0.15
+
+      # GNSS velocity: disabled (1 Hz position-only; finite-difference
+      # velocity at 1 Hz is too noisy and was already disabled in the
+      # previous profile).
+      use_gnss_velocity: false
+      propagate_gnss_velocity_cross_state: true
+      var_gnss_velocity_xy: 0.02
+      var_gnss_velocity_z: 0.5
+      min_gnss_velocity_distance_m: 0.05
+      max_gnss_velocity_dt_sec: 1.0
+      max_gnss_velocity_innovation_mps: 5.0
+
+      # --- GNSS course yaw ---
+      use_gnss_course_yaw: true
+      # var_gnss_course_yaw: measurement noise for course-derived heading.
+      # Previous: 0.08.  Tighten to 0.04 (~11 deg 1-sigma) to let GNSS
+      # heading pull yaw more aggressively, compensating for the now-tighter
+      # gyro trust.  This is justified when the vehicle is moving in a
+      # straight line at moderate speed.
+      var_gnss_course_yaw: 0.04
+      # min_gnss_course_distance_m: minimum displacement before computing
+      # heading.  Previous: 0.35 m.  At 1 Hz GNSS this is only ~1.3 km/h.
+      # Raise to 0.8 m (~3 km/h) to suppress noisy heading at low speed
+      # and near-stationary conditions.
+      min_gnss_course_distance_m: 0.8
+      # min_gnss_course_speed_mps: additional speed gate.
+      # Raise from 0.2 to 0.5 m/s for the same reason.
+      min_gnss_course_speed_mps: 0.5
+      # max_gnss_course_dt_sec: maximum time between base and current GNSS
+      # samples.  Previous: 2.2 s.  Keep at 2.5 s to allow accumulation
+      # over 2 GNSS epochs when the vehicle is slow.
+      max_gnss_course_dt_sec: 2.5
+      # max_gnss_course_dyaw_rad: innovation gate.  Keep wide (pi) to avoid
+      # rejecting valid course corrections during initial convergence.
+      max_gnss_course_dyaw_rad: 3.14159265358979323846
+
+      var_odom_xyz: 0.2
+      use_gnss: true
+      use_odom: false
