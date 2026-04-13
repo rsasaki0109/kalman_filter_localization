@@ -230,12 +230,13 @@ public:
     Q.block<3, 3>(6, 6) = var_imu_gyro_bias_ * Eigen::Matrix3d::Identity() * dt_imu;
     Q.block<3, 3>(9, 9) = var_imu_acc_bias_ * Eigen::Matrix3d::Identity() * dt_imu;
 
-    // L
+    // L  –  noise input matrix.
+    // Q already carries the discrete dt² / dt scaling, so L must NOT
+    // multiply by dt again (otherwise process noise is under-counted).
     Eigen::Matrix<double, num_error_state_, 12> L =
       Eigen::Matrix<double, num_error_state_, 12>::Zero();
-    L.block<3, 3>(ERROR_STATE::DX, 0) = 0.5 * rot_mat * dt_imu * dt_imu;
-    L.block<3, 3>(ERROR_STATE::DVX, 0) = rot_mat * dt_imu;
-    L.block<3, 3>(ERROR_STATE::DTHX, 3) = Eigen::Matrix3d::Identity() * dt_imu;
+    L.block<3, 3>(ERROR_STATE::DVX, 0) = rot_mat;
+    L.block<3, 3>(ERROR_STATE::DTHX, 3) = Eigen::Matrix3d::Identity();
     L.block<3, 3>(ERROR_STATE::DBGX, 6) = Eigen::Matrix3d::Identity();
     L.block<3, 3>(ERROR_STATE::DBAX, 9) = Eigen::Matrix3d::Identity();
 
