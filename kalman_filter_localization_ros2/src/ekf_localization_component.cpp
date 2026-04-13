@@ -119,8 +119,16 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("var_imu_acc", var_imu_acc_);
     node_.declare_parameter("var_imu_gyro_bias", 0.0);
     node_.get_parameter("var_imu_gyro_bias", var_imu_gyro_bias_);
+    node_.declare_parameter("initial_imu_gyro_bias_covariance", 0.0);
+    node_.get_parameter("initial_imu_gyro_bias_covariance", initial_imu_gyro_bias_covariance_);
     node_.declare_parameter("tau_gyro_bias_sec", 3600.0);
     node_.get_parameter("tau_gyro_bias_sec", tau_gyro_bias_sec_);
+    node_.declare_parameter("var_imu_acc_bias", 0.0);
+    node_.get_parameter("var_imu_acc_bias", var_imu_acc_bias_);
+    node_.declare_parameter("initial_imu_acc_bias_covariance", 0.0);
+    node_.get_parameter("initial_imu_acc_bias_covariance", initial_imu_acc_bias_covariance_);
+    node_.declare_parameter("tau_acc_bias_sec", 3600.0);
+    node_.get_parameter("tau_acc_bias_sec", tau_acc_bias_sec_);
     node_.declare_parameter("use_imu_orientation", false);
     node_.get_parameter("use_imu_orientation", use_imu_orientation_);
     node_.declare_parameter("use_imu_orientation_covariance", true);
@@ -291,11 +299,57 @@ struct EkfLocalizationComponent::Impl
         tau_gyro_bias_sec_);
       tau_gyro_bias_sec_ = 3600.0;
     }
+    if (!(initial_imu_gyro_bias_covariance_ >= 0.0) ||
+      !std::isfinite(initial_imu_gyro_bias_covariance_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter initial_imu_gyro_bias_covariance=%f. fallback to default=0.0",
+        initial_imu_gyro_bias_covariance_);
+      initial_imu_gyro_bias_covariance_ = 0.0;
+    }
+    if (!(var_imu_acc_bias_ >= 0.0) || !std::isfinite(var_imu_acc_bias_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter var_imu_acc_bias=%f. fallback to default=0.0",
+        var_imu_acc_bias_);
+      var_imu_acc_bias_ = 0.0;
+    }
+    if (!(tau_acc_bias_sec_ > 0.0) || !std::isfinite(tau_acc_bias_sec_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter tau_acc_bias_sec=%f. fallback to default=3600.0",
+        tau_acc_bias_sec_);
+      tau_acc_bias_sec_ = 3600.0;
+    }
+    if (!(initial_imu_acc_bias_covariance_ >= 0.0) ||
+      !std::isfinite(initial_imu_acc_bias_covariance_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter initial_imu_acc_bias_covariance=%f. fallback to default=0.0",
+        initial_imu_acc_bias_covariance_);
+      initial_imu_acc_bias_covariance_ = 0.0;
+    }
 
     ekf_.setVarImuGyro(var_imu_w_);
     ekf_.setVarImuAcc(var_imu_acc_);
     ekf_.setVarImuGyroBias(var_imu_gyro_bias_);
+    if (!ekf_.setInitialGyroBiasCovariance(initial_imu_gyro_bias_covariance_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter initial_imu_gyro_bias_covariance=%f. fallback to default=0.0",
+        initial_imu_gyro_bias_covariance_);
+    }
     ekf_.setTauGyroBias(tau_gyro_bias_sec_);
+    ekf_.setVarImuAccBias(var_imu_acc_bias_);
+    if (!ekf_.setInitialAccelBiasCovariance(initial_imu_acc_bias_covariance_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter initial_imu_acc_bias_covariance=%f. fallback to default=0.0",
+        initial_imu_acc_bias_covariance_);
+    }
+    ekf_.setTauAccBias(tau_acc_bias_sec_);
     if (!ekf_.setMaxPredictionDtSec(max_imu_dt_sec_)) {
       RCLCPP_WARN(
         node_.get_logger(),
@@ -316,6 +370,14 @@ struct EkfLocalizationComponent::Impl
     const std::string output_pose_name = node_.get_name() + std::string("/current_pose");
     current_pose_pub_ =
       node_.create_publisher<geometry_msgs::msg::PoseStamped>(output_pose_name, 10);
+    const std::string output_gyro_bias_name =
+      node_.get_name() + std::string("/current_gyro_bias");
+    current_gyro_bias_pub_ =
+      node_.create_publisher<geometry_msgs::msg::Vector3Stamped>(output_gyro_bias_name, 10);
+    const std::string output_accel_bias_name =
+      node_.get_name() + std::string("/current_accel_bias");
+    current_accel_bias_pub_ =
+      node_.create_publisher<geometry_msgs::msg::Vector3Stamped>(output_accel_bias_name, 10);
 
     // Setup Subscriber
     auto initial_pose_callback =
@@ -758,6 +820,23 @@ struct EkfLocalizationComponent::Impl
     current_pose_.pose.orientation.z = pose.orientation.z();
     current_pose_.pose.orientation.w = pose.orientation.w();
     current_pose_pub_->publish(current_pose_);
+
+    const auto state = ekf_.getState();
+    geometry_msgs::msg::Vector3Stamped gyro_bias_msg;
+    gyro_bias_msg.header = current_pose_.header;
+    gyro_bias_msg.header.frame_id = robot_frame_id_;
+    gyro_bias_msg.vector.x = state.gyro_bias.x();
+    gyro_bias_msg.vector.y = state.gyro_bias.y();
+    gyro_bias_msg.vector.z = state.gyro_bias.z();
+    current_gyro_bias_pub_->publish(gyro_bias_msg);
+
+    geometry_msgs::msg::Vector3Stamped accel_bias_msg;
+    accel_bias_msg.header = current_pose_.header;
+    accel_bias_msg.header.frame_id = robot_frame_id_;
+    accel_bias_msg.vector.x = state.accel_bias.x();
+    accel_bias_msg.vector.y = state.accel_bias.y();
+    accel_bias_msg.vector.z = state.accel_bias.z();
+    current_accel_bias_pub_->publish(accel_bias_msg);
   }
 
   EkfLocalizationComponent & node_;
@@ -773,7 +852,11 @@ struct EkfLocalizationComponent::Impl
   double var_imu_w_{0.0};
   double var_imu_acc_{0.0};
   double var_imu_gyro_bias_{0.0};
+  double initial_imu_gyro_bias_covariance_{0.0};
   double tau_gyro_bias_sec_{0.0};
+  double var_imu_acc_bias_{0.0};
+  double initial_imu_acc_bias_covariance_{0.0};
+  double tau_acc_bias_sec_{0.0};
   bool use_imu_orientation_{false};
   bool use_imu_orientation_covariance_{true};
   double var_imu_orientation_rpy_{0.0};
@@ -832,6 +915,8 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;
