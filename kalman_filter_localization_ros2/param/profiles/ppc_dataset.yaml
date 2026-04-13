@@ -10,7 +10,7 @@ ekf_localization:
       odom_topic: "/odom"
       pub_period: 10
 
-      gravity_mps2: 0.0
+      gravity_mps2: 9.80665
       use_imu_orientation: false
       use_flat_ground: true
       var_flat_ground_rp: 0.05
