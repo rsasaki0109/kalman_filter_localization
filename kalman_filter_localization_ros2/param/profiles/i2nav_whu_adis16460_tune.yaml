@@ -1,3 +1,4 @@
+# i2Nav-WHU (~1 Hz GNSS): course yaw helps heading; light gyro bias for drift.
 ekf_localization:
     ros__parameters:
       reference_frame_id: "map"
@@ -7,29 +8,37 @@ ekf_localization:
       odom_topic: "/odom"
       pub_period: 10
 
-      # Istanbul all-sensors bags publish gravity-compensated acceleration.
       gravity_mps2: 0.0
-
-      # Raw-IMU mode: use flat-ground pseudo-observation instead of IMU orientation.
       use_imu_orientation: false
       use_flat_ground: true
-      var_flat_ground_rp: 0.05
+      var_flat_ground_rp: 0.06
 
-      var_imu_w: 0.02
+      var_imu_w: 0.03
       var_imu_acc: 0.05
+      var_imu_gyro_bias: 1.0e-10
+      initial_imu_gyro_bias_covariance: 1.0e-6
+      tau_gyro_bias_sec: 3600.0
       var_imu_acc_bias: 1.0e-8
       tau_acc_bias_sec: 3600.0
       max_imu_dt_sec: 0.5
-      var_gnss_xy: 0.02
-      var_gnss_z: 0.1
-      use_gnss_velocity: true
+
+      var_gnss_xy: 0.025
+      var_gnss_z: 0.10
+      use_gnss_velocity: false
       propagate_gnss_velocity_cross_state: true
       var_gnss_velocity_xy: 0.02
       var_gnss_velocity_z: 0.5
       min_gnss_velocity_distance_m: 0.05
       max_gnss_velocity_dt_sec: 1.0
       max_gnss_velocity_innovation_mps: 5.0
-      var_odom_xyz: 0.2
 
+      use_gnss_course_yaw: true
+      var_gnss_course_yaw: 0.07
+      min_gnss_course_distance_m: 0.25
+      min_gnss_course_speed_mps: 0.15
+      max_gnss_course_dt_sec: 2.5
+      max_gnss_course_dyaw_rad: 3.14159265358979323846
+
+      var_odom_xyz: 0.2
       use_gnss: true
       use_odom: false

@@ -7,10 +7,7 @@ ekf_localization:
       odom_topic: "/odom"
       pub_period: 10
 
-      # Istanbul all-sensors bags publish gravity-compensated acceleration.
       gravity_mps2: 0.0
-
-      # Raw-IMU mode: use flat-ground pseudo-observation instead of IMU orientation.
       use_imu_orientation: false
       use_flat_ground: true
       var_flat_ground_rp: 0.05
@@ -20,16 +17,18 @@ ekf_localization:
       var_imu_acc_bias: 1.0e-8
       tau_acc_bias_sec: 3600.0
       max_imu_dt_sec: 0.5
-      var_gnss_xy: 0.02
-      var_gnss_z: 0.1
-      use_gnss_velocity: true
+
+      var_gnss_xy: 0.04
+      var_gnss_z: 0.15
+      # i2Nav GNSS_RTK.pos is ~1 Hz — gnss-velocity updates are often harmful.
+      use_gnss_velocity: false
       propagate_gnss_velocity_cross_state: true
       var_gnss_velocity_xy: 0.02
       var_gnss_velocity_z: 0.5
       min_gnss_velocity_distance_m: 0.05
       max_gnss_velocity_dt_sec: 1.0
       max_gnss_velocity_innovation_mps: 5.0
-      var_odom_xyz: 0.2
 
+      var_odom_xyz: 0.2
       use_gnss: true
       use_odom: false

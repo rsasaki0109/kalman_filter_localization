@@ -60,6 +60,7 @@ public:
     Eigen::Vector3d velocity{Eigen::Vector3d::Zero()};
     Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
     Eigen::Vector3d gyro_bias{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d accel_bias{Eigen::Vector3d::Zero()};
   };
 
   enum class PredictionUpdateStatus : std::uint8_t
@@ -84,23 +85,28 @@ public:
     var_imu_w_{0.33},
     var_imu_acc_{0.33},
     var_imu_gyro_bias_{0.0},
+    var_imu_acc_bias_{0.0},
     max_prediction_dt_sec_{0.5},
-    tau_gyro_bias_{3600.0}
+    initial_gyro_bias_covariance_{0.0},
+    initial_accel_bias_covariance_{0.0},
+    tau_gyro_bias_{3600.0},
+    tau_acc_bias_{3600.0}
   {
-    /* x  = [p v q bg] = [x y z vx vy vz qx qy qz qw bgx bgy bgz] */
-    x_ << 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0;
-    // Keep gyro-bias estimation disabled by default until process noise is explicitly enabled.
-    P_.block<3, 3>(9, 9).setZero();
+    /* x  = [p v q bg ba] = [x y z vx vy vz qx qy qz qw bgx bgy bgz bax bay baz] */
+    x_ << 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0;
+    applyInitialBiasCovariances();
   }
 
 /* state
-* x  = [p v q bg] = [x y z vx vy vz qx qy qz qw bgx bgy bgz]
-* dx = [dp dv dth dbg] = [dx dy dz dvx dvy dvz dthx dthy dthz dbgx dbgy dbgz]
+* x  = [p v q bg ba] = [x y z vx vy vz qx qy qz qw bgx bgy bgz bax bay baz]
+* dx = [dp dv dth dbg dba] =
+*      [dx dy dz dvx dvy dvz dthx dthy dthz dbgx dbgy dbgz dbax dbay dbaz]
 *
-* pos_k = pos_{k-1} + vel_k * dt + (1/2) * (Rot(q_{k-1}) acc_{k-1}^{imu} - g) *dt^2
-* vel_k = vel_{k-1} + (Rot(quat_{k-1})) acc_{k-1}^{imu} - g) *dt
+* pos_k = pos_{k-1} + vel_k * dt + (1/2) * (Rot(q_{k-1}) (acc_{k-1}^{imu} - ba_{k-1}) - g) *dt^2
+* vel_k = vel_{k-1} + (Rot(quat_{k-1}) (acc_{k-1}^{imu} - ba_{k-1}) - g) *dt
 * quat_k = Rot((w_{k-1}^{imu} - bg_{k-1})*dt)*quat_{k-1}
 * bg_k = exp(-dt/tau_bg) * bg_{k-1} + noise
+* ba_k = exp(-dt/tau_ba) * ba_{k-1} + noise
 *
 * covariance
 * P_{k} = F_k P_{k-1} F_k^T + L Q_k L^T
@@ -150,6 +156,7 @@ public:
     }
 
     const Eigen::Vector3d gyro_bias = x_.segment(STATE::BGX, 3);
+    const Eigen::Vector3d accel_bias = x_.segment(STATE::BAX, 3);
     const Eigen::Vector3d unbiased_gyro = gyro - gyro_bias;
 
     // Integrate angular velocity using the exponential map.
@@ -163,6 +170,7 @@ public:
       linear_acceleration.x(),
       linear_acceleration.y(),
       linear_acceleration.z());
+    const Eigen::Vector3d unbiased_acc = acc - accel_bias;
 
     // state
     Eigen::Quaterniond previous_quat(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
@@ -171,45 +179,69 @@ public:
 
     // pos
     x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dt_imu * x_.segment(STATE::VX, 3) +
-      0.5 * dt_imu * dt_imu * (rot_mat * acc - gravity_);
+      0.5 * dt_imu * dt_imu * (rot_mat * unbiased_acc - gravity_);
     // vel
-    x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * acc - gravity_);
+    x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * unbiased_acc - gravity_);
     // quat
-    const Eigen::Quaterniond predicted_quat = (quat_wdt * previous_quat).normalized();
+    const Eigen::Quaterniond predicted_quat = (previous_quat * quat_wdt).normalized();
     x_.segment(STATE::QX, 4) = Eigen::Vector4d(
       predicted_quat.x(), predicted_quat.y(), predicted_quat.z(), predicted_quat.w());
-    // gyro bias
-    const double bias_decay =
+    // imu biases
+    const double gyro_bias_decay =
       (tau_gyro_bias_ > 0.0 &&
       std::isfinite(tau_gyro_bias_)) ? std::exp(-dt_imu / tau_gyro_bias_) : 1.0;
-    x_.segment(STATE::BGX, 3) = bias_decay * x_.segment(STATE::BGX, 3);
+    const double accel_bias_decay =
+      (tau_acc_bias_ > 0.0 &&
+      std::isfinite(tau_acc_bias_)) ? std::exp(-dt_imu / tau_acc_bias_) : 1.0;
+    x_.segment(STATE::BGX, 3) = gyro_bias_decay * x_.segment(STATE::BGX, 3);
+    x_.segment(STATE::BAX, 3) = accel_bias_decay * x_.segment(STATE::BAX, 3);
 
     // F
     EigenMatrixErrorState F = EigenMatrixErrorState::Identity();
     F.block<3, 3>(0, 3) = dt_imu * Eigen::Matrix3d::Identity();
     Eigen::Matrix3d acc_skew;
     acc_skew <<
-      0, -acc(2), acc(1),
-      acc(2), 0, -acc(0),
-      -acc(1), acc(0), 0;
+      0, -unbiased_acc(2), unbiased_acc(1),
+      unbiased_acc(2), 0, -unbiased_acc(0),
+      -unbiased_acc(1), unbiased_acc(0), 0;
+    Eigen::Matrix3d gyro_skew;
+    gyro_skew <<
+      0, -unbiased_gyro(2), unbiased_gyro(1),
+      unbiased_gyro(2), 0, -unbiased_gyro(0),
+      -unbiased_gyro(1), unbiased_gyro(0), 0;
+    F.block<3, 3>(ERROR_STATE::DX, ERROR_STATE::DTHX) =
+      0.5 * rot_mat * (-acc_skew) * dt_imu * dt_imu;
+    F.block<3, 3>(ERROR_STATE::DX, ERROR_STATE::DBAX) =
+      -0.5 * rot_mat * dt_imu * dt_imu;
     F.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DTHX) = rot_mat * (-acc_skew) * dt_imu;
+    F.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DBAX) = -rot_mat * dt_imu;
+    F.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DTHX) =
+      Eigen::Matrix3d::Identity() - gyro_skew * dt_imu;
     F.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DBGX) = -dt_imu * Eigen::Matrix3d::Identity();
-    F.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX) = bias_decay * Eigen::Matrix3d::Identity();
+    F.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX) =
+      gyro_bias_decay * Eigen::Matrix3d::Identity();
+    F.block<3, 3>(ERROR_STATE::DBAX, ERROR_STATE::DBAX) =
+      accel_bias_decay * Eigen::Matrix3d::Identity();
 
     // Q
-    Eigen::Matrix<double, 9, 9> Q = Eigen::Matrix<double, 9, 9>::Zero();
+    Eigen::Matrix<double, 12, 12> Q = Eigen::Matrix<double, 12, 12>::Zero();
     Q.block<3, 3>(0, 0) = var_imu_acc_ * Eigen::Matrix3d::Identity() * (dt_imu * dt_imu);
     Q.block<3, 3>(3, 3) = var_imu_w_ * Eigen::Matrix3d::Identity() * (dt_imu * dt_imu);
     Q.block<3, 3>(6, 6) = var_imu_gyro_bias_ * Eigen::Matrix3d::Identity() * dt_imu;
+    Q.block<3, 3>(9, 9) = var_imu_acc_bias_ * Eigen::Matrix3d::Identity() * dt_imu;
 
-    // L
-    Eigen::Matrix<double, num_error_state_, 9> L =
-      Eigen::Matrix<double, num_error_state_, 9>::Zero();
-    L.block<3, 3>(ERROR_STATE::DVX, 0) = Eigen::Matrix3d::Identity();
+    // L  –  noise input matrix.
+    // Q already carries the discrete dt² / dt scaling, so L must NOT
+    // multiply by dt again (otherwise process noise is under-counted).
+    Eigen::Matrix<double, num_error_state_, 12> L =
+      Eigen::Matrix<double, num_error_state_, 12>::Zero();
+    L.block<3, 3>(ERROR_STATE::DVX, 0) = rot_mat;
     L.block<3, 3>(ERROR_STATE::DTHX, 3) = Eigen::Matrix3d::Identity();
     L.block<3, 3>(ERROR_STATE::DBGX, 6) = Eigen::Matrix3d::Identity();
+    L.block<3, 3>(ERROR_STATE::DBAX, 9) = Eigen::Matrix3d::Identity();
 
     P_ = F * P_ * F.transpose() + L * Q * L.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
     return PredictionUpdateStatus::kUpdated;
   }
 
@@ -271,12 +303,15 @@ public:
       Eigen::Matrix<double, 3, num_error_state_>::Zero();
     H.block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
 
-    const Eigen::Matrix<double, num_error_state_, 3> K =
-      P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
+    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
+    const Eigen::Matrix<double, num_error_state_, 3> K = P_ * H.transpose() * S.inverse();
     const Eigen::Matrix<double, num_error_state_, 1> dx = K * innov;
 
     applyErrorState(dx);
-    P_ = (EigenMatrixErrorState::Identity() - K * H) * P_;
+    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
+    const EigenMatrixErrorState A = I - K * H;
+    P_ = A * P_ * A.transpose() + K * R * K.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -322,13 +357,16 @@ public:
     Eigen::Matrix<double, 3, num_error_state_> H =
       Eigen::Matrix<double, 3, num_error_state_>::Zero();
     H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
-    const Eigen::Matrix<double, num_error_state_, 3> K =
-      P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
+    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
+    const Eigen::Matrix<double, num_error_state_, 3> K = P_ * H.transpose() * S.inverse();
     const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - x_.segment(STATE::X, 3));
 
     applyErrorState(dx);
 
-    P_ = (EigenMatrixErrorState::Identity() - K * H) * P_;
+    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
+    const EigenMatrixErrorState A = I - K * H;
+    P_ = A * P_ * A.transpose() + K * R * K.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -393,6 +431,36 @@ public:
     var_imu_gyro_bias_ = var_imu_gyro_bias;
   }
 
+  bool setInitialGyroBiasCovariance(const double covariance)
+  {
+    if (!(covariance >= 0.0) || !std::isfinite(covariance)) {
+      return false;
+    }
+    initial_gyro_bias_covariance_ = covariance;
+    applyInitialBiasCovariances();
+    return true;
+  }
+
+  void setTauAccBias(const double tau_acc_bias)
+  {
+    tau_acc_bias_ = tau_acc_bias;
+  }
+
+  void setVarImuAccBias(const double var_imu_acc_bias)
+  {
+    var_imu_acc_bias_ = var_imu_acc_bias;
+  }
+
+  bool setInitialAccelBiasCovariance(const double covariance)
+  {
+    if (!(covariance >= 0.0) || !std::isfinite(covariance)) {
+      return false;
+    }
+    initial_accel_bias_covariance_ = covariance;
+    applyInitialBiasCovariances();
+    return true;
+  }
+
   void setVarImuGyro(const double var_imu_w)
   {
     var_imu_w_ = var_imu_w;
@@ -448,7 +516,7 @@ public:
   // Typed state accessors. These avoid leaking the internal state vector layout.
   void setPose(const Pose & pose)
   {
-    setState({pose.position, getVelocity(), pose.orientation, getGyroBias()});
+    setState({pose.position, getVelocity(), pose.orientation, getGyroBias(), getAccelBias()});
   }
 
   void setState(const State & state)
@@ -461,6 +529,7 @@ public:
     x_(STATE::QZ) = q.z();
     x_(STATE::QW) = q.w();
     x_.segment(STATE::BGX, 3) = state.gyro_bias;
+    x_.segment(STATE::BAX, 3) = state.accel_bias;
   }
 
   Pose getPose() const
@@ -478,6 +547,7 @@ public:
     state.velocity = getVelocity();
     state.orientation = getOrientation();
     state.gyro_bias = getGyroBias();
+    state.accel_bias = getAccelBias();
     return state;
   }
 
@@ -499,6 +569,11 @@ public:
   Eigen::Vector3d getGyroBias() const
   {
     return x_.segment(STATE::BGX, 3);
+  }
+
+  Eigen::Vector3d getAccelBias() const
+  {
+    return x_.segment(STATE::BAX, 3);
   }
 
   Eigen::VectorXd getX()
@@ -527,8 +602,8 @@ public:
   }
 
 private:
-  static const int num_state_{13};
-  static const int num_error_state_{12};
+  static const int num_state_{16};
+  static const int num_error_state_{15};
 
   typedef Eigen::Matrix<double, num_error_state_, num_error_state_> EigenMatrixErrorState;
 
@@ -538,6 +613,7 @@ private:
     VX = 3, VY = 4, VZ = 5,
     QX = 6, QY = 7, QZ = 8, QW = 9,
     BGX = 10, BGY = 11, BGZ = 12,
+    BAX = 13, BAY = 14, BAZ = 15,
   };
   enum ERROR_STATE
   {
@@ -545,7 +621,16 @@ private:
     DVX  = 3, DVY = 4, DVZ = 5,
     DTHX = 6, DTHY = 7, DTHZ = 8,
     DBGX = 9, DBGY = 10, DBGZ = 11,
+    DBAX = 12, DBAY = 13, DBAZ = 14,
   };
+
+  void applyInitialBiasCovariances()
+  {
+    P_.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX) =
+      initial_gyro_bias_covariance_ * Eigen::Matrix3d::Identity();
+    P_.block<3, 3>(ERROR_STATE::DBAX, ERROR_STATE::DBAX) =
+      initial_accel_bias_covariance_ * Eigen::Matrix3d::Identity();
+  }
 
   void applyErrorState(const Eigen::Ref<const Eigen::Matrix<double, num_error_state_, 1>> & dx)
   {
@@ -575,6 +660,8 @@ private:
 
     // gyro bias
     x_.segment(STATE::BGX, 3) = x_.segment(STATE::BGX, 3) + dx.segment(ERROR_STATE::DBGX, 3);
+    // accel bias
+    x_.segment(STATE::BAX, 3) = x_.segment(STATE::BAX, 3) + dx.segment(ERROR_STATE::DBAX, 3);
   }
 
   double previous_time_imu_;
@@ -582,7 +669,10 @@ private:
   double var_imu_w_;
   double var_imu_acc_;
   double var_imu_gyro_bias_;
+  double var_imu_acc_bias_;
   double max_prediction_dt_sec_;
+  double initial_gyro_bias_covariance_;
+  double initial_accel_bias_covariance_;
 
   Eigen::Matrix<double, num_state_, 1> x_;
   EigenMatrixErrorState P_;
@@ -590,6 +680,7 @@ private:
   Eigen::Vector3d gravity_{0.0, 0.0, 9.80665};
 
   double tau_gyro_bias_;
+  double tau_acc_bias_;
 };
 }  // namespace core
 

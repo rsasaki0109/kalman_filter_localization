@@ -149,6 +149,84 @@ TEST(EKFEstimatorCore, PredictionUpdateSubtractsGyroBias)
   EXPECT_NEAR(ekf.getGyroBias().z(), 0.1, 1e-4);
 }
 
+TEST(EKFEstimatorCore, PredictionUpdateSubtractsAccelBias)
+{
+  EKFEstimator ekf;
+  ekf.setGravityZ(0.0);
+  ekf.setTauAccBias(1.0e12);
+
+  EKFEstimator::State state;
+  state.accel_bias = Eigen::Vector3d(0.3, -0.2, 0.1);
+  ekf.setState(state);
+
+  EXPECT_EQ(
+    ekf.predictionUpdateDt(0.1, Eigen::Vector3d::Zero(), state.accel_bias),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+
+  EXPECT_LT(ekf.getPosition().norm(), 1e-12);
+  EXPECT_LT(ekf.getVelocity().norm(), 1e-12);
+  EXPECT_NEAR((ekf.getAccelBias() - state.accel_bias).norm(), 0.0, 1e-12);
+}
+
+TEST(EKFEstimatorCore, PredictionUpdateUsesBodyFrameAngularVelocity)
+{
+  EKFEstimator ekf;
+  ekf.setGravityZ(0.0);
+  constexpr double kHalfPi = 1.57079632679489661923;
+
+  EKFEstimator::State state;
+  state.orientation =
+    Eigen::Quaterniond(Eigen::AngleAxisd(kHalfPi, Eigen::Vector3d::UnitZ()));
+  ekf.setState(state);
+
+  const Eigen::Vector3d gyro_meas(1.0, 0.0, 0.0);
+  EXPECT_EQ(
+    ekf.predictionUpdateDt(0.1, gyro_meas, Eigen::Vector3d::Zero()),
+    EKFEstimator::PredictionUpdateStatus::kUpdated);
+
+  const Eigen::Quaterniond q_expected =
+    (state.orientation * Eigen::Quaterniond(Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitX())))
+    .normalized();
+  const Eigen::Quaterniond q_wrong =
+    (Eigen::Quaterniond(Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitX())) * state.orientation)
+    .normalized();
+  const Eigen::Quaterniond q_actual = ekf.getOrientation().normalized();
+
+  const double dot_expected = std::abs(q_expected.dot(q_actual));
+  const double angle_expected = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot_expected)));
+  const double dot_wrong = std::abs(q_wrong.dot(q_actual));
+  const double angle_wrong = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot_wrong)));
+
+  EXPECT_LT(angle_expected, 1e-10);
+  EXPECT_GT(angle_wrong, 1.0e-2);
+}
+
+TEST(EKFEstimatorCore, InitialBiasCovarianceSettersUpdateCovariance)
+{
+  EKFEstimator ekf;
+
+  const Eigen::MatrixXd p_default = ekf.getCovariance();
+  EXPECT_NEAR(p_default(9, 9), 0.0, 1e-12);
+  EXPECT_NEAR(p_default(12, 12), 0.0, 1e-12);
+
+  EXPECT_TRUE(ekf.setInitialGyroBiasCovariance(0.25));
+  EXPECT_TRUE(ekf.setInitialAccelBiasCovariance(0.5));
+
+  const Eigen::MatrixXd p = ekf.getCovariance();
+  EXPECT_NEAR(p(9, 9), 0.25, 1e-12);
+  EXPECT_NEAR(p(10, 10), 0.25, 1e-12);
+  EXPECT_NEAR(p(11, 11), 0.25, 1e-12);
+  EXPECT_NEAR(p(12, 12), 0.5, 1e-12);
+  EXPECT_NEAR(p(13, 13), 0.5, 1e-12);
+  EXPECT_NEAR(p(14, 14), 0.5, 1e-12);
+
+  EXPECT_FALSE(ekf.setInitialGyroBiasCovariance(-1.0));
+  EXPECT_FALSE(ekf.setInitialAccelBiasCovariance(-1.0));
+  const Eigen::MatrixXd p_after_invalid = ekf.getCovariance();
+  EXPECT_NEAR(p_after_invalid(9, 9), 0.25, 1e-12);
+  EXPECT_NEAR(p_after_invalid(12, 12), 0.5, 1e-12);
+}
+
 TEST(EKFEstimatorCore, OrientationObservationCanEstimateGyroBias)
 {
   EKFEstimator ekf;
@@ -175,6 +253,36 @@ TEST(EKFEstimatorCore, OrientationObservationCanEstimateGyroBias)
   const double dot = std::abs(q_est.dot(q_meas));
   const double angle_err = 2.0 * std::acos(std::min(1.0, std::max(-1.0, dot)));
   EXPECT_LT(angle_err, 2.0e-2);
+}
+
+TEST(EKFEstimatorCore, PositionObservationCanEstimateAccelBias)
+{
+  EKFEstimator ekf;
+  ekf.setGravityZ(0.0);
+  ekf.setTauAccBias(1.0e12);
+  ekf.setVarImuAccBias(1.0e-4);
+  ASSERT_TRUE(ekf.setInitialAccelBiasCovariance(1.0));
+
+  const Eigen::Vector3d acc_meas(0.3, -0.2, 0.1);
+  const Eigen::Vector3d gyro = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d pos_meas = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d pos_var(1.0e-4, 1.0e-4, 1.0e-4);
+
+  for (int i = 0; i < 400; ++i) {
+    EXPECT_EQ(
+      ekf.predictionUpdateDt(0.01, gyro, acc_meas),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+    EXPECT_EQ(
+      ekf.observationUpdateWithStatus(pos_meas, pos_var),
+      EKFEstimator::ObservationUpdateStatus::kUpdated);
+  }
+
+  const Eigen::Vector3d bias_est = ekf.getAccelBias();
+  EXPECT_NEAR(bias_est.x(), acc_meas.x(), 5.0e-2);
+  EXPECT_NEAR(bias_est.y(), acc_meas.y(), 5.0e-2);
+  EXPECT_NEAR(bias_est.z(), acc_meas.z(), 5.0e-2);
+  EXPECT_LT(ekf.getPosition().norm(), 5.0e-2);
+  EXPECT_LT(ekf.getVelocity().norm(), 5.0e-2);
 }
 
 TEST(EKFEstimatorCore, ObservationUpdateOrientationValidationAndConvergence)

@@ -1,0 +1,55 @@
+# PPC-Dataset tuned profile for the upstream ADIS16505-2 IMU.
+# Dataset notes from PPC-Dataset README:
+#   - IMU: ADIS16505-2, 100 Hz, raw acceleration (gravity included)
+#   - GNSS: RTKLIB post-processed rover/base observations, ~1 Hz
+#
+# Rationale:
+#   - The previous ppc_dataset.yaml was conservative and left bias estimation off.
+#   - The real-GNSS sweep shows yaw is often acceptable, but XY can drift more than
+#     the raw GNSS trajectory on some runs. This profile tightens gyro trust,
+#     enables moderate IMU bias estimation, and makes GNSS course-yaw updates less
+#     eager at low speed.
+ekf_localization:
+    ros__parameters:
+      reference_frame_id: "map"
+      robot_frame_id: "base_link"
+      gnss_pose_topic: "/gnss_pose"
+      imu_topic: "/sensing/imu/imu_data"
+      odom_topic: "/odom"
+      pub_period: 10
+
+      gravity_mps2: 9.80665
+      use_imu_orientation: false
+      use_flat_ground: true
+      var_flat_ground_rp: 0.05
+
+      var_imu_w: 0.01
+      var_imu_acc: 0.03
+      var_imu_gyro_bias: 1.0e-9
+      initial_imu_gyro_bias_covariance: 1.0e-4
+      tau_gyro_bias_sec: 300.0
+      var_imu_acc_bias: 1.0e-7
+      initial_imu_acc_bias_covariance: 1.0e-4
+      tau_acc_bias_sec: 600.0
+      max_imu_dt_sec: 0.8
+
+      var_gnss_xy: 0.04
+      var_gnss_z: 0.15
+      use_gnss_velocity: false
+      propagate_gnss_velocity_cross_state: true
+      var_gnss_velocity_xy: 0.02
+      var_gnss_velocity_z: 0.5
+      min_gnss_velocity_distance_m: 0.05
+      max_gnss_velocity_dt_sec: 1.0
+      max_gnss_velocity_innovation_mps: 5.0
+
+      use_gnss_course_yaw: true
+      var_gnss_course_yaw: 0.04
+      min_gnss_course_distance_m: 0.8
+      min_gnss_course_speed_mps: 0.5
+      max_gnss_course_dt_sec: 2.5
+      max_gnss_course_dyaw_rad: 3.14159265358979323846
+
+      var_odom_xyz: 0.2
+      use_gnss: true
+      use_odom: false

@@ -7,23 +7,23 @@ ekf_localization:
       odom_topic: "/odom"
       pub_period: 10
 
-      # Istanbul all-sensors bags appear to publish gravity-compensated acceleration.
-      # Set gravity_mps2 to 0.0 to avoid double subtracting gravity.
+      # Istanbul all-sensors bags publish gravity-compensated acceleration.
       gravity_mps2: 0.0
 
-      # Legacy alias kept for compatibility. The actively selected dedicated
-      # profile is `istanbul_all_sensors_bag4_6.yaml`.
-      use_imu_orientation: true
-      use_imu_orientation_covariance: true
-      var_imu_orientation_rpy: 0.0015
+      # Raw-IMU mode: use flat-ground pseudo-observation instead of IMU orientation.
+      use_imu_orientation: false
+      use_flat_ground: true
+      var_flat_ground_rp: 0.05
 
       var_imu_w: 0.02
       var_imu_acc: 0.05
+      var_imu_acc_bias: 1.0e-8
+      tau_acc_bias_sec: 3600.0
       max_imu_dt_sec: 0.5
       var_gnss_xy: 0.02
       var_gnss_z: 0.1
-      # Bags 5-6 benefit from an additional GNSS-derived world-velocity update.
       use_gnss_velocity: true
+      propagate_gnss_velocity_cross_state: true
       var_gnss_velocity_xy: 0.02
       var_gnss_velocity_z: 0.5
       min_gnss_velocity_distance_m: 0.05
