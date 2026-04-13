@@ -13,7 +13,7 @@ ekf_localization:
       # Raw-IMU mode: use flat-ground pseudo-observation instead of IMU orientation.
       use_imu_orientation: false
       use_flat_ground: true
-      var_flat_ground_rp: 0.02
+      var_flat_ground_rp: 0.05
 
       var_imu_w: 0.02
       var_imu_acc: 0.05
