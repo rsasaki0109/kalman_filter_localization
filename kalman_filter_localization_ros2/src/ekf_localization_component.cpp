@@ -50,6 +50,8 @@
 #include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <sensor_msgs/msg/nav_sat_status.hpp>
 
 #include <rclcpp/qos.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -65,6 +67,15 @@ namespace kalman_filter_localization
 namespace
 {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kWgs84SemiMajorAxisM = 6378137.0;
+constexpr double kWgs84Flattening = 1.0 / 298.257223563;
+constexpr double kWgs84EccentricitySquared =
+  2.0 * kWgs84Flattening - kWgs84Flattening * kWgs84Flattening;
+
+double degToRad(double angle_deg)
+{
+  return angle_deg * kPi / 180.0;
+}
 
 double wrapToPi(double angle_rad)
 {
@@ -83,6 +94,50 @@ double getYawRadFromQuaternion(const Eigen::Quaterniond & q_in)
   const double siny_cosp = 2.0 * (q.w() * q.z() + q.x() * q.y());
   const double cosy_cosp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
   return std::atan2(siny_cosp, cosy_cosp);
+}
+
+bool isValidLatitudeLongitude(double latitude_deg, double longitude_deg)
+{
+  return std::isfinite(latitude_deg) && std::isfinite(longitude_deg) &&
+         latitude_deg >= -90.0 && latitude_deg <= 90.0 &&
+         longitude_deg >= -180.0 && longitude_deg <= 180.0;
+}
+
+Eigen::Vector3d geodeticToEcef(double latitude_deg, double longitude_deg, double height_m)
+{
+  const double lat = degToRad(latitude_deg);
+  const double lon = degToRad(longitude_deg);
+  const double sin_lat = std::sin(lat);
+  const double cos_lat = std::cos(lat);
+  const double sin_lon = std::sin(lon);
+  const double cos_lon = std::cos(lon);
+  const double n = kWgs84SemiMajorAxisM /
+    std::sqrt(1.0 - kWgs84EccentricitySquared * sin_lat * sin_lat);
+
+  return Eigen::Vector3d(
+    (n + height_m) * cos_lat * cos_lon,
+    (n + height_m) * cos_lat * sin_lon,
+    (n * (1.0 - kWgs84EccentricitySquared) + height_m) * sin_lat);
+}
+
+Eigen::Vector3d ecefToEnu(
+  const Eigen::Vector3d & ecef,
+  const Eigen::Vector3d & origin_ecef,
+  double origin_latitude_deg,
+  double origin_longitude_deg)
+{
+  const double lat0 = degToRad(origin_latitude_deg);
+  const double lon0 = degToRad(origin_longitude_deg);
+  const double sin_lat0 = std::sin(lat0);
+  const double cos_lat0 = std::cos(lat0);
+  const double sin_lon0 = std::sin(lon0);
+  const double cos_lon0 = std::cos(lon0);
+  const Eigen::Vector3d d = ecef - origin_ecef;
+
+  return Eigen::Vector3d(
+    -sin_lon0 * d.x() + cos_lon0 * d.y(),
+    -sin_lat0 * cos_lon0 * d.x() - sin_lat0 * sin_lon0 * d.y() + cos_lat0 * d.z(),
+    cos_lat0 * cos_lon0 * d.x() + cos_lat0 * sin_lon0 * d.y() + sin_lat0 * d.z());
 }
 }  // namespace
 
@@ -110,6 +165,22 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("odom_topic", odom_topic_);
     node_.declare_parameter("gnss_pose_topic", node_.get_name() + std::string("/gnss_pose"));
     node_.get_parameter("gnss_pose_topic", gnss_pose_topic_);
+    node_.declare_parameter("gnss_input_type", "pose");
+    node_.get_parameter("gnss_input_type", gnss_input_type_);
+    node_.declare_parameter("gnss_navsatfix_topic", node_.get_name() + std::string("/gnss/fix"));
+    node_.get_parameter("gnss_navsatfix_topic", gnss_navsatfix_topic_);
+    node_.declare_parameter("gnss_navsatfix_use_first_fix_as_origin", true);
+    node_.get_parameter(
+      "gnss_navsatfix_use_first_fix_as_origin", gnss_navsatfix_use_first_fix_as_origin_);
+    node_.declare_parameter(
+      "gnss_navsatfix_origin_latitude", std::numeric_limits<double>::quiet_NaN());
+    node_.get_parameter("gnss_navsatfix_origin_latitude", gnss_navsatfix_origin_latitude_);
+    node_.declare_parameter(
+      "gnss_navsatfix_origin_longitude", std::numeric_limits<double>::quiet_NaN());
+    node_.get_parameter("gnss_navsatfix_origin_longitude", gnss_navsatfix_origin_longitude_);
+    node_.declare_parameter(
+      "gnss_navsatfix_origin_altitude", std::numeric_limits<double>::quiet_NaN());
+    node_.get_parameter("gnss_navsatfix_origin_altitude", gnss_navsatfix_origin_altitude_);
 
     node_.declare_parameter("pub_period", 10);
     node_.get_parameter("pub_period", pub_period_);
@@ -193,6 +264,28 @@ struct EkfLocalizationComponent::Impl
         output_stamp_source_.c_str());
       output_stamp_source_ = "latest_input";
     }
+    if (gnss_input_type_ != "pose" && gnss_input_type_ != "navsatfix") {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_input_type='%s'. fallback to default='pose'",
+        gnss_input_type_.c_str());
+      gnss_input_type_ = "pose";
+    }
+    if (gnss_input_type_ == "navsatfix" && !gnss_navsatfix_use_first_fix_as_origin_) {
+      if (isValidLatitudeLongitude(
+          gnss_navsatfix_origin_latitude_, gnss_navsatfix_origin_longitude_))
+      {
+        const double origin_altitude = std::isfinite(gnss_navsatfix_origin_altitude_) ?
+          gnss_navsatfix_origin_altitude_ : 0.0;
+        setGnssNavSatFixOrigin(
+          gnss_navsatfix_origin_latitude_, gnss_navsatfix_origin_longitude_, origin_altitude);
+      } else {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid NavSatFix origin parameters. fallback to first fix as origin");
+        gnss_navsatfix_use_first_fix_as_origin_ = true;
+      }
+    }
     if (use_imu_orientation_ && use_flat_ground_) {
       RCLCPP_WARN(
         node_.get_logger(),
@@ -260,7 +353,9 @@ struct EkfLocalizationComponent::Impl
           max_gnss_velocity_dt_sec_);
         max_gnss_velocity_dt_sec_ = 1.0;
       }
-      if (!(min_gnss_velocity_distance_m_ >= 0.0) || !std::isfinite(min_gnss_velocity_distance_m_)) {
+      if (!(min_gnss_velocity_distance_m_ >= 0.0) ||
+        !std::isfinite(min_gnss_velocity_distance_m_))
+      {
         RCLCPP_WARN(
           node_.get_logger(),
           "invalid parameter min_gnss_velocity_distance_m=%f. fallback to 0.0",
@@ -515,14 +610,18 @@ struct EkfLocalizationComponent::Impl
     auto gnss_pose_callback =
       [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
       {
-        if (initial_pose_received_ && use_gnss_) {
-          measurementUpdate(*msg, var_gnss_);
-          if (use_gnss_velocity_) {
-            updateVelocityFromGnss(*msg);
-          }
-          if (use_gnss_course_yaw_) {
-            updateYawFromGnssCourse(*msg);
-          }
+        handleGnssPose(*msg);
+      };
+
+    auto gnss_navsatfix_callback =
+      [this](const sensor_msgs::msg::NavSatFix::SharedPtr msg) -> void
+      {
+        if (!initial_pose_received_ || !use_gnss_) {
+          return;
+        }
+        geometry_msgs::msg::PoseStamped pose_msg;
+        if (convertNavSatFixToPose(*msg, pose_msg)) {
+          handleGnssPose(pose_msg);
         }
       };
 
@@ -538,10 +637,23 @@ struct EkfLocalizationComponent::Impl
       node_.create_subscription<nav_msgs::msg::Odometry>(
       odom_topic_, 1,
       odom_callback);
-    sub_gnss_pose_ =
-      node_.create_subscription<geometry_msgs::msg::PoseStamped>(
-      gnss_pose_topic_, 1,
-      gnss_pose_callback);
+    if (gnss_input_type_ == "navsatfix") {
+      rclcpp::SensorDataQoS gnss_qos;
+      gnss_qos.keep_last(1);
+      sub_gnss_navsatfix_ =
+        node_.create_subscription<sensor_msgs::msg::NavSatFix>(
+        gnss_navsatfix_topic_, gnss_qos,
+        gnss_navsatfix_callback);
+      RCLCPP_INFO(
+        node_.get_logger(),
+        "GNSS input: NavSatFix '%s' -> ENU PoseStamped in frame '%s'",
+        gnss_navsatfix_topic_.c_str(), reference_frame_id_.c_str());
+    } else {
+      sub_gnss_pose_ =
+        node_.create_subscription<geometry_msgs::msg::PoseStamped>(
+        gnss_pose_topic_, 1,
+        gnss_pose_callback);
+    }
     const std::chrono::milliseconds period(pub_period_);
     timer_ = node_.create_wall_timer(
       std::chrono::duration_cast<std::chrono::nanoseconds>(period),
@@ -631,6 +743,75 @@ struct EkfLocalizationComponent::Impl
         RCLCPP_WARN_THROTTLE(
           node_.get_logger(), clock_, 5000,
           "skip EKF flat-ground update due to invalid variance (need finite positive)");
+      }
+    }
+  }
+
+  void setGnssNavSatFixOrigin(double latitude_deg, double longitude_deg, double altitude_m)
+  {
+    gnss_navsatfix_origin_latitude_ = latitude_deg;
+    gnss_navsatfix_origin_longitude_ = longitude_deg;
+    gnss_navsatfix_origin_altitude_ = altitude_m;
+    gnss_navsatfix_origin_ecef_ = geodeticToEcef(latitude_deg, longitude_deg, altitude_m);
+    has_gnss_navsatfix_origin_ = true;
+  }
+
+  bool convertNavSatFixToPose(
+    const sensor_msgs::msg::NavSatFix & fix_msg,
+    geometry_msgs::msg::PoseStamped & pose_msg)
+  {
+    if (fix_msg.status.status < sensor_msgs::msg::NavSatStatus::STATUS_FIX) {
+      return false;
+    }
+    if (!isValidLatitudeLongitude(fix_msg.latitude, fix_msg.longitude)) {
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), clock_, 5000,
+        "skip NavSatFix due to invalid latitude/longitude");
+      return false;
+    }
+    const double altitude = std::isfinite(fix_msg.altitude) ? fix_msg.altitude : 0.0;
+
+    if (!has_gnss_navsatfix_origin_) {
+      if (!gnss_navsatfix_use_first_fix_as_origin_) {
+        return false;
+      }
+      setGnssNavSatFixOrigin(fix_msg.latitude, fix_msg.longitude, altitude);
+      RCLCPP_INFO(
+        node_.get_logger(),
+        "NavSatFix ENU origin locked to first fix: %.8f, %.8f, %.3f",
+        gnss_navsatfix_origin_latitude_,
+        gnss_navsatfix_origin_longitude_,
+        gnss_navsatfix_origin_altitude_);
+    }
+
+    const Eigen::Vector3d ecef = geodeticToEcef(fix_msg.latitude, fix_msg.longitude, altitude);
+    const Eigen::Vector3d enu = ecefToEnu(
+      ecef,
+      gnss_navsatfix_origin_ecef_,
+      gnss_navsatfix_origin_latitude_,
+      gnss_navsatfix_origin_longitude_);
+
+    pose_msg.header.stamp = fix_msg.header.stamp;
+    pose_msg.header.frame_id = reference_frame_id_;
+    pose_msg.pose.position.x = enu.x();
+    pose_msg.pose.position.y = enu.y();
+    pose_msg.pose.position.z = enu.z();
+    pose_msg.pose.orientation.x = 0.0;
+    pose_msg.pose.orientation.y = 0.0;
+    pose_msg.pose.orientation.z = 0.0;
+    pose_msg.pose.orientation.w = 1.0;
+    return true;
+  }
+
+  void handleGnssPose(const geometry_msgs::msg::PoseStamped & pose_msg)
+  {
+    if (initial_pose_received_ && use_gnss_) {
+      measurementUpdate(pose_msg, var_gnss_);
+      if (use_gnss_velocity_) {
+        updateVelocityFromGnss(pose_msg);
+      }
+      if (use_gnss_course_yaw_) {
+        updateYawFromGnssCourse(pose_msg);
       }
     }
   }
@@ -847,6 +1028,14 @@ struct EkfLocalizationComponent::Impl
   std::string imu_topic_;
   std::string odom_topic_;
   std::string gnss_pose_topic_;
+  std::string gnss_input_type_;
+  std::string gnss_navsatfix_topic_;
+  bool gnss_navsatfix_use_first_fix_as_origin_{true};
+  double gnss_navsatfix_origin_latitude_{std::numeric_limits<double>::quiet_NaN()};
+  double gnss_navsatfix_origin_longitude_{std::numeric_limits<double>::quiet_NaN()};
+  double gnss_navsatfix_origin_altitude_{std::numeric_limits<double>::quiet_NaN()};
+  Eigen::Vector3d gnss_navsatfix_origin_ecef_{Eigen::Vector3d::Zero()};
+  bool has_gnss_navsatfix_origin_{false};
   int pub_period_{0};
 
   double var_imu_w_{0.0};
@@ -914,6 +1103,7 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
+  rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr sub_gnss_navsatfix_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
