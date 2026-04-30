@@ -3,6 +3,12 @@ ekf_localization:
       reference_frame_id: "map"
       robot_frame_id: "base_link"
       gnss_pose_topic: "gnss_pose"
+      gnss_input_type: "pose"  # "pose" or "navsatfix"
+      gnss_navsatfix_topic: "/gnss/fix"
+      gnss_navsatfix_use_first_fix_as_origin: true
+      # gnss_navsatfix_origin_latitude: 35.0
+      # gnss_navsatfix_origin_longitude: 139.0
+      # gnss_navsatfix_origin_altitude: 0.0
       imu_topic: "imu"
       odom_topic: "odom"
       pub_period: 10
