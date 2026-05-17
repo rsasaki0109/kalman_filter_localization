@@ -40,6 +40,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -310,6 +311,15 @@ struct EkfLocalizationComponent::Impl
       "gnss_position_nis_adaptive_threshold", gnss_position_nis_adaptive_threshold_);
     node_.declare_parameter("max_gnss_position_variance_scale", 1.0);
     node_.get_parameter("max_gnss_position_variance_scale", max_gnss_position_variance_scale_);
+    node_.declare_parameter("gnss_position_reacquisition_dt_sec", 0.0);
+    node_.get_parameter("gnss_position_reacquisition_dt_sec", gnss_position_reacquisition_dt_sec_);
+    node_.declare_parameter("gnss_position_reacquisition_variance_scale", 1.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_variance_scale",
+      gnss_position_reacquisition_variance_scale_);
+    node_.declare_parameter("gnss_position_reacquisition_update_count", 1);
+    node_.get_parameter(
+      "gnss_position_reacquisition_update_count", gnss_position_reacquisition_update_count_);
     node_.declare_parameter("gnss_position_innovation_adaptive_threshold_m", 0.0);
     node_.get_parameter(
       "gnss_position_innovation_adaptive_threshold_m",
@@ -509,6 +519,33 @@ struct EkfLocalizationComponent::Impl
         "invalid parameter max_gnss_position_variance_scale=%f. fallback to 1.0",
         max_gnss_position_variance_scale_);
       max_gnss_position_variance_scale_ = 1.0;
+    }
+    if (
+      !(gnss_position_reacquisition_dt_sec_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_dt_sec_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_dt_sec=%f. disabling GNSS reacquisition scaling",
+        gnss_position_reacquisition_dt_sec_);
+      gnss_position_reacquisition_dt_sec_ = 0.0;
+    }
+    if (
+      !(gnss_position_reacquisition_variance_scale_ >= 1.0) ||
+      !std::isfinite(gnss_position_reacquisition_variance_scale_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_variance_scale=%f. fallback to 1.0",
+        gnss_position_reacquisition_variance_scale_);
+      gnss_position_reacquisition_variance_scale_ = 1.0;
+    }
+    if (gnss_position_reacquisition_update_count_ < 1) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_update_count=%d. fallback to 1",
+        gnss_position_reacquisition_update_count_);
+      gnss_position_reacquisition_update_count_ = 1;
     }
     if (
       !(gnss_position_innovation_adaptive_threshold_m_ >= 0.0) ||
@@ -1082,6 +1119,38 @@ struct EkfLocalizationComponent::Impl
     return std::min(max_scale, std::max(1.0, scale));
   }
 
+  double computeGnssReacquisitionVarianceScale(
+    const geometry_msgs::msg::PoseStamped & pose_msg)
+  {
+    if (!(gnss_position_reacquisition_dt_sec_ > 0.0) ||
+      !(gnss_position_reacquisition_variance_scale_ > 1.0))
+    {
+      return 1.0;
+    }
+
+    const double t = stampToSec(pose_msg.header.stamp);
+    double scale = 1.0;
+    if (
+      has_previous_gnss_position_time_ && std::isfinite(t) &&
+      std::isfinite(previous_gnss_position_time_))
+    {
+      const double dt = t - previous_gnss_position_time_;
+      if (dt > gnss_position_reacquisition_dt_sec_) {
+        gnss_position_reacquisition_updates_remaining_ =
+          std::max(1, gnss_position_reacquisition_update_count_);
+      }
+    }
+    if (std::isfinite(t)) {
+      previous_gnss_position_time_ = t;
+      has_previous_gnss_position_time_ = true;
+    }
+    if (gnss_position_reacquisition_updates_remaining_ > 0) {
+      scale = gnss_position_reacquisition_variance_scale_;
+      --gnss_position_reacquisition_updates_remaining_;
+    }
+    return scale;
+  }
+
   static double covarianceDiagAt(const Eigen::MatrixXd & covariance, const int index)
   {
     if (covariance.rows() <= index || covariance.cols() <= index) {
@@ -1317,6 +1386,8 @@ struct EkfLocalizationComponent::Impl
     const double raw_nis = computePositionNis(innovation, variance, covariance);
     const StateSnapshot state_before = captureState();
     const double innovation_norm = innovation.norm();
+    const double reacquisition_variance_scale = publish_gnss_debug ?
+      computeGnssReacquisitionVarianceScale(pose_msg) : 1.0;
 
     if (
       max_gnss_position_innovation_m_ > 0.0 && std::isfinite(innovation_norm) &&
@@ -1358,7 +1429,8 @@ struct EkfLocalizationComponent::Impl
       innovation.norm(),
       gnss_position_innovation_adaptive_threshold_m_,
       max_gnss_position_innovation_variance_scale_);
-    const double variance_scale = std::max(nis_variance_scale, innovation_variance_scale);
+    const double variance_scale =
+      std::max({nis_variance_scale, innovation_variance_scale, reacquisition_variance_scale});
     Eigen::Vector3d update_innovation = innovation;
     if (
       max_gnss_position_innovation_clip_m_ > 0.0 &&
@@ -1768,6 +1840,9 @@ struct EkfLocalizationComponent::Impl
   double max_gnss_course_yaw_nis_{0.0};
   double gnss_position_nis_adaptive_threshold_{0.0};
   double max_gnss_position_variance_scale_{1.0};
+  double gnss_position_reacquisition_dt_sec_{0.0};
+  double gnss_position_reacquisition_variance_scale_{1.0};
+  int gnss_position_reacquisition_update_count_{1};
   double gnss_position_innovation_adaptive_threshold_m_{0.0};
   double max_gnss_position_innovation_variance_scale_{1.0};
   double gnss_course_yaw_nis_adaptive_threshold_{0.0};
@@ -1801,6 +1876,9 @@ struct EkfLocalizationComponent::Impl
   bool has_previous_velocity_gnss_{false};
   double previous_velocity_gnss_time_{0.0};
   Eigen::Vector3d previous_velocity_gnss_position_{Eigen::Vector3d::Zero()};
+  bool has_previous_gnss_position_time_{false};
+  double previous_gnss_position_time_{0.0};
+  int gnss_position_reacquisition_updates_remaining_{0};
 
   core::EKFEstimator ekf_;
 

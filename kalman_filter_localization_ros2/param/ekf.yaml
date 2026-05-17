@@ -50,6 +50,9 @@ ekf_localization:
       max_gnss_position_nis: 0.0  # 0 disables hard NIS gate
       gnss_position_nis_adaptive_threshold: 0.0  # 0 disables adaptive R
       max_gnss_position_variance_scale: 1.0
+      gnss_position_reacquisition_dt_sec: 0.0  # 0 disables long-gap reacquisition R scaling
+      gnss_position_reacquisition_variance_scale: 1.0
+      gnss_position_reacquisition_update_count: 1
       gnss_position_innovation_adaptive_threshold_m: 0.0  # 0 disables innovation-norm adaptive R
       max_gnss_position_innovation_variance_scale: 1.0
       var_odom_xyz: 0.2
