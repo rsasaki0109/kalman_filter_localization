@@ -98,6 +98,21 @@ double getYawRadFromQuaternion(const Eigen::Quaterniond & q_in)
   return std::atan2(siny_cosp, cosy_cosp);
 }
 
+Eigen::Vector3d getRpyRadFromQuaternion(const Eigen::Quaterniond & q_in)
+{
+  const Eigen::Quaterniond q = q_in.normalized();
+  const double sinr_cosp = 2.0 * (q.w() * q.x() + q.y() * q.z());
+  const double cosr_cosp = 1.0 - 2.0 * (q.x() * q.x() + q.y() * q.y());
+  const double roll = std::atan2(sinr_cosp, cosr_cosp);
+
+  const double sinp = 2.0 * (q.w() * q.y() - q.z() * q.x());
+  const double pitch =
+    std::abs(sinp) >= 1.0 ? std::copysign(kPi / 2.0, sinp) : std::asin(sinp);
+
+  const double yaw = getYawRadFromQuaternion(q);
+  return Eigen::Vector3d(roll, pitch, yaw);
+}
+
 double stampToSec(const builtin_interfaces::msg::Time & stamp)
 {
   return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
@@ -150,6 +165,12 @@ Eigen::Vector3d ecefToEnu(
 
 struct EkfLocalizationComponent::Impl
 {
+  struct StateSnapshot
+  {
+    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d rpy{Eigen::Vector3d::Zero()};
+  };
+
   explicit Impl(EkfLocalizationComponent & node)
   : node_(node),
     clock_(RCL_ROS_TIME),
@@ -559,6 +580,9 @@ struct EkfLocalizationComponent::Impl
       debug_gnss_course_yaw_pub_ =
         node_.create_publisher<std_msgs::msg::Float64MultiArray>(
         debug_prefix + std::string("gnss_course_yaw"), 10);
+      debug_update_delta_pub_ =
+        node_.create_publisher<std_msgs::msg::Float64MultiArray>(
+        debug_prefix + std::string("update_delta"), 10);
     }
 
     // Setup Subscriber
@@ -825,11 +849,20 @@ struct EkfLocalizationComponent::Impl
       const double yaw_rad = getYawRadFromQuaternion(q_est);
       const Eigen::Quaterniond q_level(Eigen::AngleAxisd(yaw_rad, Eigen::Vector3d::UnitZ()));
       const Eigen::Vector3d var_rpy_rad2(var_flat_ground_rp_, var_flat_ground_rp_, 1.0e6);
+      const StateSnapshot state_before = captureState();
       const auto obs_status = ekf_.observationUpdateOrientationWithStatus(q_level, var_rpy_rad2);
-      if (obs_status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+      if (obs_status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+        publishUpdateDeltaDebug(imu_msg.header.stamp, 2, -1, state_before, state_before);
+        RCLCPP_WARN_THROTTLE(
+          node_.get_logger(), clock_, 5000,
+          "skip EKF flat-ground update due to invalid quaternion measurement");
+      } else if (obs_status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+        publishUpdateDeltaDebug(imu_msg.header.stamp, 2, -2, state_before, state_before);
         RCLCPP_WARN_THROTTLE(
           node_.get_logger(), clock_, 5000,
           "skip EKF flat-ground update due to invalid variance (need finite positive)");
+      } else {
+        publishUpdateDeltaDebug(imu_msg.header.stamp, 2, 1, state_before, captureState());
       }
     }
   }
@@ -1032,6 +1065,55 @@ struct EkfLocalizationComponent::Impl
     debug_gnss_course_yaw_pub_->publish(msg);
   }
 
+  StateSnapshot captureState() const
+  {
+    return StateSnapshot{
+      ekf_.getPosition(),
+      getRpyRadFromQuaternion(ekf_.getOrientation().normalized())};
+  }
+
+  void publishUpdateDeltaDebug(
+    const builtin_interfaces::msg::Time & stamp,
+    const int update_type,
+    const int status_code,
+    const StateSnapshot & before,
+    const StateSnapshot & after)
+  {
+    if (!debug_update_delta_pub_) {
+      return;
+    }
+    const Eigen::Vector3d dp = after.position - before.position;
+    const double droll = wrapToPi(after.rpy.x() - before.rpy.x());
+    const double dpitch = wrapToPi(after.rpy.y() - before.rpy.y());
+    const double dyaw = wrapToPi(after.rpy.z() - before.rpy.z());
+
+    std_msgs::msg::Float64MultiArray msg;
+    msg.data = {
+      stampToSec(stamp),
+      static_cast<double>(update_type),
+      static_cast<double>(status_code),
+      dp.x(),
+      dp.y(),
+      dp.z(),
+      dp.head<2>().norm(),
+      droll,
+      dpitch,
+      dyaw,
+      before.position.x(),
+      before.position.y(),
+      before.position.z(),
+      after.position.x(),
+      after.position.y(),
+      after.position.z(),
+      before.rpy.x(),
+      before.rpy.y(),
+      before.rpy.z(),
+      after.rpy.x(),
+      after.rpy.y(),
+      after.rpy.z()};
+    debug_update_delta_pub_->publish(msg);
+  }
+
   void measurementUpdate(
     const geometry_msgs::msg::PoseStamped & pose_msg,
     const Eigen::Vector3d & variance,
@@ -1046,12 +1128,14 @@ struct EkfLocalizationComponent::Impl
     const Eigen::Vector3d innovation = y - ekf_.getPosition();
     const Eigen::MatrixXd covariance = ekf_.getCovariance();
     const double raw_nis = computePositionNis(innovation, variance, covariance);
+    const StateSnapshot state_before = captureState();
 
     if (
       publish_gnss_debug && max_gnss_position_nis_ > 0.0 &&
       std::isfinite(raw_nis) && raw_nis > max_gnss_position_nis_)
     {
       publishGnssPositionDebug(pose_msg, innovation, raw_nis, 0, variance, covariance, raw_nis, 1.0);
+      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 0, state_before, state_before);
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip GNSS position update due to large NIS: nis=%f > max=%f",
@@ -1071,6 +1155,7 @@ struct EkfLocalizationComponent::Impl
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
           pose_msg, innovation, used_nis, -1, used_variance, covariance, raw_nis, variance_scale);
+        publishUpdateDeltaDebug(pose_msg.header.stamp, 1, -1, state_before, state_before);
       }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
@@ -1081,6 +1166,7 @@ struct EkfLocalizationComponent::Impl
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
           pose_msg, innovation, used_nis, -2, used_variance, covariance, raw_nis, variance_scale);
+        publishUpdateDeltaDebug(pose_msg.header.stamp, 1, -2, state_before, state_before);
       }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
@@ -1090,6 +1176,7 @@ struct EkfLocalizationComponent::Impl
     if (publish_gnss_debug) {
       publishGnssPositionDebug(
         pose_msg, innovation, used_nis, 1, used_variance, covariance, raw_nis, variance_scale);
+      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 1, state_before, captureState());
     }
   }
 
@@ -1187,6 +1274,7 @@ struct EkfLocalizationComponent::Impl
     const double dyaw = wrapToPi(yaw_meas - yaw_est);
     const Eigen::MatrixXd covariance = ekf_.getCovariance();
     const double raw_nis = computeYawNis(dyaw, var_gnss_course_yaw_, covariance);
+    const StateSnapshot state_before = captureState();
     if (
       max_gnss_course_yaw_nis_ > 0.0 && std::isfinite(raw_nis) &&
       raw_nis > max_gnss_course_yaw_nis_)
@@ -1206,6 +1294,7 @@ struct EkfLocalizationComponent::Impl
         var_gnss_course_yaw_,
         raw_nis,
         1.0);
+      publishUpdateDeltaDebug(pose_msg.header.stamp, 3, 0, state_before, state_before);
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(),
         clock_,
@@ -1240,6 +1329,7 @@ struct EkfLocalizationComponent::Impl
         used_yaw_variance,
         raw_nis,
         variance_scale);
+      publishUpdateDeltaDebug(pose_msg.header.stamp, 3, 0, state_before, state_before);
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(),
         clock_,
@@ -1280,6 +1370,7 @@ struct EkfLocalizationComponent::Impl
       used_yaw_variance,
       raw_nis,
       variance_scale);
+    publishUpdateDeltaDebug(pose_msg.header.stamp, 3, status_code, state_before, captureState());
 
     // Update the base point after applying the measurement.
     course_base_gnss_time_ = t;
@@ -1494,6 +1585,7 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_position_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_course_yaw_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_update_delta_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;
