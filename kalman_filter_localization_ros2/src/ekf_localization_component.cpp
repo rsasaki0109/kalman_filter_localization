@@ -45,6 +45,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -169,6 +170,30 @@ struct EkfLocalizationComponent::Impl
   {
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
     Eigen::Vector3d rpy{Eigen::Vector3d::Zero()};
+  };
+
+  struct UpdateDeltaExtra
+  {
+    double raw_innovation_norm{std::numeric_limits<double>::quiet_NaN()};
+    double used_innovation_norm{std::numeric_limits<double>::quiet_NaN()};
+    double raw_nis{std::numeric_limits<double>::quiet_NaN()};
+    double used_nis{std::numeric_limits<double>::quiet_NaN()};
+    double variance_scale{std::numeric_limits<double>::quiet_NaN()};
+    double kalman_gain_norm{std::numeric_limits<double>::quiet_NaN()};
+    double kalman_gain_position_norm{std::numeric_limits<double>::quiet_NaN()};
+    double kalman_gain_velocity_norm{std::numeric_limits<double>::quiet_NaN()};
+    double kalman_gain_attitude_norm{std::numeric_limits<double>::quiet_NaN()};
+    double predicted_dx_norm{std::numeric_limits<double>::quiet_NaN()};
+    double predicted_dx_xy_norm{std::numeric_limits<double>::quiet_NaN()};
+    double predicted_dtheta_norm{std::numeric_limits<double>::quiet_NaN()};
+    Eigen::Vector3d covariance_position_diag{
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN())};
+    Eigen::Vector3d covariance_velocity_diag{
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN())};
+    Eigen::Vector3d covariance_attitude_diag{
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN())};
+    Eigen::Vector3d used_variance{
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN())};
   };
 
   explicit Impl(EkfLocalizationComponent & node)
@@ -1057,6 +1082,64 @@ struct EkfLocalizationComponent::Impl
     return std::min(max_scale, std::max(1.0, scale));
   }
 
+  static double covarianceDiagAt(const Eigen::MatrixXd & covariance, const int index)
+  {
+    if (covariance.rows() <= index || covariance.cols() <= index) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    return covariance(index, index);
+  }
+
+  static UpdateDeltaExtra computePositionUpdateExtra(
+    const Eigen::MatrixXd & covariance,
+    const Eigen::Vector3d & raw_innovation,
+    const Eigen::Vector3d & used_innovation,
+    const Eigen::Vector3d & used_variance,
+    const double raw_nis,
+    const double used_nis,
+    const double variance_scale)
+  {
+    UpdateDeltaExtra extra;
+    extra.raw_innovation_norm = raw_innovation.norm();
+    extra.used_innovation_norm = used_innovation.norm();
+    extra.raw_nis = raw_nis;
+    extra.used_nis = used_nis;
+    extra.variance_scale = variance_scale;
+    extra.used_variance = used_variance;
+    extra.covariance_position_diag = Eigen::Vector3d(
+      covarianceDiagAt(covariance, 0), covarianceDiagAt(covariance, 1),
+      covarianceDiagAt(covariance, 2));
+    extra.covariance_velocity_diag = Eigen::Vector3d(
+      covarianceDiagAt(covariance, 3), covarianceDiagAt(covariance, 4),
+      covarianceDiagAt(covariance, 5));
+    extra.covariance_attitude_diag = Eigen::Vector3d(
+      covarianceDiagAt(covariance, 6), covarianceDiagAt(covariance, 7),
+      covarianceDiagAt(covariance, 8));
+
+    if (covariance.rows() < 15 || covariance.cols() < 15 || !used_variance.allFinite()) {
+      return extra;
+    }
+
+    Eigen::Matrix3d R = Eigen::Matrix3d::Zero();
+    R.diagonal() = used_variance;
+    const Eigen::Matrix3d S = covariance.block<3, 3>(0, 0) + R;
+    const Eigen::FullPivLU<Eigen::Matrix3d> lu(S);
+    if (!lu.isInvertible()) {
+      return extra;
+    }
+
+    const Eigen::Matrix<double, 15, 3> K = covariance.block<15, 3>(0, 0) * lu.inverse();
+    const Eigen::Matrix<double, 15, 1> dx = K * used_innovation;
+    extra.kalman_gain_norm = K.norm();
+    extra.kalman_gain_position_norm = K.block<3, 3>(0, 0).norm();
+    extra.kalman_gain_velocity_norm = K.block<3, 3>(3, 0).norm();
+    extra.kalman_gain_attitude_norm = K.block<3, 3>(6, 0).norm();
+    extra.predicted_dx_norm = dx.norm();
+    extra.predicted_dx_xy_norm = dx.segment<2>(0).norm();
+    extra.predicted_dtheta_norm = dx.segment<3>(6).norm();
+    return extra;
+  }
+
   void publishGnssPositionDebug(
     const geometry_msgs::msg::PoseStamped & pose_msg,
     const Eigen::Vector3d & innovation,
@@ -1147,6 +1230,17 @@ struct EkfLocalizationComponent::Impl
     const StateSnapshot & before,
     const StateSnapshot & after)
   {
+    publishUpdateDeltaDebug(stamp, update_type, status_code, before, after, UpdateDeltaExtra{});
+  }
+
+  void publishUpdateDeltaDebug(
+    const builtin_interfaces::msg::Time & stamp,
+    const int update_type,
+    const int status_code,
+    const StateSnapshot & before,
+    const StateSnapshot & after,
+    const UpdateDeltaExtra & extra)
+  {
     if (!debug_update_delta_pub_) {
       return;
     }
@@ -1178,7 +1272,31 @@ struct EkfLocalizationComponent::Impl
       before.rpy.z(),
       after.rpy.x(),
       after.rpy.y(),
-      after.rpy.z()};
+      after.rpy.z(),
+      extra.raw_innovation_norm,
+      extra.used_innovation_norm,
+      extra.raw_nis,
+      extra.used_nis,
+      extra.variance_scale,
+      extra.kalman_gain_norm,
+      extra.kalman_gain_position_norm,
+      extra.kalman_gain_velocity_norm,
+      extra.kalman_gain_attitude_norm,
+      extra.predicted_dx_norm,
+      extra.predicted_dx_xy_norm,
+      extra.predicted_dtheta_norm,
+      extra.covariance_position_diag.x(),
+      extra.covariance_position_diag.y(),
+      extra.covariance_position_diag.z(),
+      extra.covariance_velocity_diag.x(),
+      extra.covariance_velocity_diag.y(),
+      extra.covariance_velocity_diag.z(),
+      extra.covariance_attitude_diag.x(),
+      extra.covariance_attitude_diag.y(),
+      extra.covariance_attitude_diag.z(),
+      extra.used_variance.x(),
+      extra.used_variance.y(),
+      extra.used_variance.z()};
     debug_update_delta_pub_->publish(msg);
   }
 
@@ -1252,13 +1370,16 @@ struct EkfLocalizationComponent::Impl
     const Eigen::Vector3d y_update = position_before_update + update_innovation;
     const Eigen::Vector3d used_variance = variance * variance_scale;
     const double used_nis = computePositionNis(update_innovation, used_variance, covariance);
+    const UpdateDeltaExtra update_extra = computePositionUpdateExtra(
+      covariance, innovation, update_innovation, used_variance, raw_nis, used_nis, variance_scale);
 
     const auto status = ekf_.observationUpdateWithStatus(y_update, used_variance);
     if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
           pose_msg, innovation, used_nis, -1, used_variance, covariance, raw_nis, variance_scale);
-        publishUpdateDeltaDebug(pose_msg.header.stamp, 1, -1, state_before, state_before);
+        publishUpdateDeltaDebug(
+          pose_msg.header.stamp, 1, -1, state_before, state_before, update_extra);
       }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
@@ -1269,7 +1390,8 @@ struct EkfLocalizationComponent::Impl
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
           pose_msg, innovation, used_nis, -2, used_variance, covariance, raw_nis, variance_scale);
-        publishUpdateDeltaDebug(pose_msg.header.stamp, 1, -2, state_before, state_before);
+        publishUpdateDeltaDebug(
+          pose_msg.header.stamp, 1, -2, state_before, state_before, update_extra);
       }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
@@ -1279,7 +1401,7 @@ struct EkfLocalizationComponent::Impl
     if (publish_gnss_debug) {
       publishGnssPositionDebug(
         pose_msg, innovation, used_nis, 1, used_variance, covariance, raw_nis, variance_scale);
-      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 1, state_before, captureState());
+      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 1, state_before, captureState(), update_extra);
     }
   }
 
