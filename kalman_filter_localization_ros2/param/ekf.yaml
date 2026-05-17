@@ -45,9 +45,13 @@ ekf_localization:
       gravity_mps2: 9.80665
       var_gnss_xy: 0.1
       var_gnss_z: 0.15
+      max_gnss_position_innovation_m: 0.0  # 0 disables hard innovation gate
+      max_gnss_position_innovation_clip_m: 0.0  # 0 disables innovation clipping
       max_gnss_position_nis: 0.0  # 0 disables hard NIS gate
       gnss_position_nis_adaptive_threshold: 0.0  # 0 disables adaptive R
       max_gnss_position_variance_scale: 1.0
+      gnss_position_innovation_adaptive_threshold_m: 0.0  # 0 disables innovation-norm adaptive R
+      max_gnss_position_innovation_variance_scale: 1.0
       var_odom_xyz: 0.2
       use_gnss: true
       use_odom: false

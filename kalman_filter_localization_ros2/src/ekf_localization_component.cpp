@@ -273,6 +273,11 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("var_gnss_xy", var_gnss_xy_);
     node_.declare_parameter("var_gnss_z", 0.15);
     node_.get_parameter("var_gnss_z", var_gnss_z_);
+    node_.declare_parameter("max_gnss_position_innovation_m", 0.0);
+    node_.get_parameter("max_gnss_position_innovation_m", max_gnss_position_innovation_m_);
+    node_.declare_parameter("max_gnss_position_innovation_clip_m", 0.0);
+    node_.get_parameter(
+      "max_gnss_position_innovation_clip_m", max_gnss_position_innovation_clip_m_);
     node_.declare_parameter("max_gnss_position_nis", 0.0);
     node_.get_parameter("max_gnss_position_nis", max_gnss_position_nis_);
     node_.declare_parameter("gnss_position_nis_adaptive_threshold", 0.0);
@@ -280,6 +285,14 @@ struct EkfLocalizationComponent::Impl
       "gnss_position_nis_adaptive_threshold", gnss_position_nis_adaptive_threshold_);
     node_.declare_parameter("max_gnss_position_variance_scale", 1.0);
     node_.get_parameter("max_gnss_position_variance_scale", max_gnss_position_variance_scale_);
+    node_.declare_parameter("gnss_position_innovation_adaptive_threshold_m", 0.0);
+    node_.get_parameter(
+      "gnss_position_innovation_adaptive_threshold_m",
+      gnss_position_innovation_adaptive_threshold_m_);
+    node_.declare_parameter("max_gnss_position_innovation_variance_scale", 1.0);
+    node_.get_parameter(
+      "max_gnss_position_innovation_variance_scale",
+      max_gnss_position_innovation_variance_scale_);
     node_.declare_parameter("max_gnss_course_yaw_nis", 0.0);
     node_.get_parameter("max_gnss_course_yaw_nis", max_gnss_course_yaw_nis_);
     node_.declare_parameter("gnss_course_yaw_nis_adaptive_threshold", 0.0);
@@ -433,6 +446,26 @@ struct EkfLocalizationComponent::Impl
       max_gnss_position_nis_ = 0.0;
     }
     if (
+      !(max_gnss_position_innovation_m_ >= 0.0) ||
+      !std::isfinite(max_gnss_position_innovation_m_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_position_innovation_m=%f. disabling GNSS position innovation gate",
+        max_gnss_position_innovation_m_);
+      max_gnss_position_innovation_m_ = 0.0;
+    }
+    if (
+      !(max_gnss_position_innovation_clip_m_ >= 0.0) ||
+      !std::isfinite(max_gnss_position_innovation_clip_m_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_position_innovation_clip_m=%f. disabling GNSS position innovation clipping",
+        max_gnss_position_innovation_clip_m_);
+      max_gnss_position_innovation_clip_m_ = 0.0;
+    }
+    if (
       !(gnss_position_nis_adaptive_threshold_ >= 0.0) ||
       !std::isfinite(gnss_position_nis_adaptive_threshold_))
     {
@@ -451,6 +484,26 @@ struct EkfLocalizationComponent::Impl
         "invalid parameter max_gnss_position_variance_scale=%f. fallback to 1.0",
         max_gnss_position_variance_scale_);
       max_gnss_position_variance_scale_ = 1.0;
+    }
+    if (
+      !(gnss_position_innovation_adaptive_threshold_m_ >= 0.0) ||
+      !std::isfinite(gnss_position_innovation_adaptive_threshold_m_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_innovation_adaptive_threshold_m=%f. disabling innovation-norm GNSS position covariance",
+        gnss_position_innovation_adaptive_threshold_m_);
+      gnss_position_innovation_adaptive_threshold_m_ = 0.0;
+    }
+    if (
+      !(max_gnss_position_innovation_variance_scale_ >= 1.0) ||
+      !std::isfinite(max_gnss_position_innovation_variance_scale_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_position_innovation_variance_scale=%f. fallback to 1.0",
+        max_gnss_position_innovation_variance_scale_);
+      max_gnss_position_innovation_variance_scale_ = 1.0;
     }
     if (!(max_gnss_course_yaw_nis_ >= 0.0) || !std::isfinite(max_gnss_course_yaw_nis_)) {
       RCLCPP_WARN(
@@ -989,6 +1042,21 @@ struct EkfLocalizationComponent::Impl
     return std::min(max_scale, std::max(1.0, scale));
   }
 
+  static double computeAdaptiveMagnitudeScale(
+    const double magnitude,
+    const double threshold,
+    const double max_scale)
+  {
+    if (!(threshold > 0.0) || !(max_scale > 1.0) || !std::isfinite(magnitude)) {
+      return 1.0;
+    }
+    if (magnitude <= threshold) {
+      return 1.0;
+    }
+    const double scale = magnitude / threshold;
+    return std::min(max_scale, std::max(1.0, scale));
+  }
+
   void publishGnssPositionDebug(
     const geometry_msgs::msg::PoseStamped & pose_msg,
     const Eigen::Vector3d & innovation,
@@ -1125,17 +1193,38 @@ struct EkfLocalizationComponent::Impl
       pose_msg.pose.position.x,
       pose_msg.pose.position.y,
       pose_msg.pose.position.z);
-    const Eigen::Vector3d innovation = y - ekf_.getPosition();
+    const Eigen::Vector3d position_before_update = ekf_.getPosition();
+    const Eigen::Vector3d innovation = y - position_before_update;
     const Eigen::MatrixXd covariance = ekf_.getCovariance();
     const double raw_nis = computePositionNis(innovation, variance, covariance);
     const StateSnapshot state_before = captureState();
+    const double innovation_norm = innovation.norm();
 
     if (
-      publish_gnss_debug && max_gnss_position_nis_ > 0.0 &&
-      std::isfinite(raw_nis) && raw_nis > max_gnss_position_nis_)
+      max_gnss_position_innovation_m_ > 0.0 && std::isfinite(innovation_norm) &&
+      innovation_norm > max_gnss_position_innovation_m_)
     {
-      publishGnssPositionDebug(pose_msg, innovation, raw_nis, 0, variance, covariance, raw_nis, 1.0);
-      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 0, state_before, state_before);
+      if (publish_gnss_debug) {
+        publishGnssPositionDebug(
+          pose_msg, innovation, raw_nis, 0, variance, covariance, raw_nis, 1.0);
+        publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 0, state_before, state_before);
+      }
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), clock_, 5000,
+        "skip GNSS position update due to large innovation: |innov|=%f [m] > max=%f [m]",
+        innovation_norm, max_gnss_position_innovation_m_);
+      return;
+    }
+
+    if (
+      max_gnss_position_nis_ > 0.0 && std::isfinite(raw_nis) &&
+      raw_nis > max_gnss_position_nis_)
+    {
+      if (publish_gnss_debug) {
+        publishGnssPositionDebug(
+          pose_msg, innovation, raw_nis, 0, variance, covariance, raw_nis, 1.0);
+        publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 0, state_before, state_before);
+      }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip GNSS position update due to large NIS: nis=%f > max=%f",
@@ -1143,14 +1232,28 @@ struct EkfLocalizationComponent::Impl
       return;
     }
 
-    const double variance_scale = computeAdaptiveVarianceScale(
+    const double nis_variance_scale = computeAdaptiveVarianceScale(
       raw_nis,
       gnss_position_nis_adaptive_threshold_,
       max_gnss_position_variance_scale_);
+    const double innovation_variance_scale = computeAdaptiveMagnitudeScale(
+      innovation.norm(),
+      gnss_position_innovation_adaptive_threshold_m_,
+      max_gnss_position_innovation_variance_scale_);
+    const double variance_scale = std::max(nis_variance_scale, innovation_variance_scale);
+    Eigen::Vector3d update_innovation = innovation;
+    if (
+      max_gnss_position_innovation_clip_m_ > 0.0 &&
+      std::isfinite(innovation_norm) &&
+      innovation_norm > max_gnss_position_innovation_clip_m_)
+    {
+      update_innovation *= max_gnss_position_innovation_clip_m_ / innovation_norm;
+    }
+    const Eigen::Vector3d y_update = position_before_update + update_innovation;
     const Eigen::Vector3d used_variance = variance * variance_scale;
-    const double used_nis = computePositionNis(innovation, used_variance, covariance);
+    const double used_nis = computePositionNis(update_innovation, used_variance, covariance);
 
-    const auto status = ekf_.observationUpdateWithStatus(y, used_variance);
+    const auto status = ekf_.observationUpdateWithStatus(y_update, used_variance);
     if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
@@ -1537,10 +1640,14 @@ struct EkfLocalizationComponent::Impl
   double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};
   double var_gnss_z_{0.0};
+  double max_gnss_position_innovation_m_{0.0};
+  double max_gnss_position_innovation_clip_m_{0.0};
   double max_gnss_position_nis_{0.0};
   double max_gnss_course_yaw_nis_{0.0};
   double gnss_position_nis_adaptive_threshold_{0.0};
   double max_gnss_position_variance_scale_{1.0};
+  double gnss_position_innovation_adaptive_threshold_m_{0.0};
+  double max_gnss_position_innovation_variance_scale_{1.0};
   double gnss_course_yaw_nis_adaptive_threshold_{0.0};
   double max_gnss_course_yaw_variance_scale_{1.0};
   Eigen::Vector3d var_gnss_{Eigen::Vector3d::Zero()};
