@@ -320,6 +320,38 @@ struct EkfLocalizationComponent::Impl
     node_.declare_parameter("gnss_position_reacquisition_update_count", 1);
     node_.get_parameter(
       "gnss_position_reacquisition_update_count", gnss_position_reacquisition_update_count_);
+    node_.declare_parameter("gnss_position_reacquisition_covariance_cap_xy", 0.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_covariance_cap_xy",
+      gnss_position_reacquisition_covariance_cap_xy_);
+    node_.declare_parameter("gnss_position_reacquisition_covariance_cap_z", 0.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_covariance_cap_z",
+      gnss_position_reacquisition_covariance_cap_z_);
+    node_.declare_parameter("gnss_position_reacquisition_velocity_covariance_cap_xy", 0.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_velocity_covariance_cap_xy",
+      gnss_position_reacquisition_velocity_covariance_cap_xy_);
+    node_.declare_parameter("gnss_position_reacquisition_velocity_covariance_cap_z", 0.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_velocity_covariance_cap_z",
+      gnss_position_reacquisition_velocity_covariance_cap_z_);
+    node_.declare_parameter("gnss_position_reacquisition_attitude_covariance_cap_rp", 0.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_attitude_covariance_cap_rp",
+      gnss_position_reacquisition_attitude_covariance_cap_rp_);
+    node_.declare_parameter("gnss_position_reacquisition_attitude_covariance_cap_yaw", 0.0);
+    node_.get_parameter(
+      "gnss_position_reacquisition_attitude_covariance_cap_yaw",
+      gnss_position_reacquisition_attitude_covariance_cap_yaw_);
+    node_.declare_parameter("gnss_position_reacquisition_reset_position", false);
+    node_.get_parameter(
+      "gnss_position_reacquisition_reset_position",
+      gnss_position_reacquisition_reset_position_);
+    node_.declare_parameter("gnss_position_reacquisition_reset_velocity", false);
+    node_.get_parameter(
+      "gnss_position_reacquisition_reset_velocity",
+      gnss_position_reacquisition_reset_velocity_);
     node_.declare_parameter("gnss_position_innovation_adaptive_threshold_m", 0.0);
     node_.get_parameter(
       "gnss_position_innovation_adaptive_threshold_m",
@@ -546,6 +578,66 @@ struct EkfLocalizationComponent::Impl
         "invalid parameter gnss_position_reacquisition_update_count=%d. fallback to 1",
         gnss_position_reacquisition_update_count_);
       gnss_position_reacquisition_update_count_ = 1;
+    }
+    if (
+      !(gnss_position_reacquisition_covariance_cap_xy_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_covariance_cap_xy_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_covariance_cap_xy=%f. disabling covariance cap",
+        gnss_position_reacquisition_covariance_cap_xy_);
+      gnss_position_reacquisition_covariance_cap_xy_ = 0.0;
+    }
+    if (
+      !(gnss_position_reacquisition_covariance_cap_z_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_covariance_cap_z_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_covariance_cap_z=%f. disabling covariance cap",
+        gnss_position_reacquisition_covariance_cap_z_);
+      gnss_position_reacquisition_covariance_cap_z_ = 0.0;
+    }
+    if (
+      !(gnss_position_reacquisition_velocity_covariance_cap_xy_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_velocity_covariance_cap_xy_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_velocity_covariance_cap_xy=%f. disabling covariance cap",
+        gnss_position_reacquisition_velocity_covariance_cap_xy_);
+      gnss_position_reacquisition_velocity_covariance_cap_xy_ = 0.0;
+    }
+    if (
+      !(gnss_position_reacquisition_velocity_covariance_cap_z_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_velocity_covariance_cap_z_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_velocity_covariance_cap_z=%f. disabling covariance cap",
+        gnss_position_reacquisition_velocity_covariance_cap_z_);
+      gnss_position_reacquisition_velocity_covariance_cap_z_ = 0.0;
+    }
+    if (
+      !(gnss_position_reacquisition_attitude_covariance_cap_rp_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_attitude_covariance_cap_rp_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_attitude_covariance_cap_rp=%f. disabling covariance cap",
+        gnss_position_reacquisition_attitude_covariance_cap_rp_);
+      gnss_position_reacquisition_attitude_covariance_cap_rp_ = 0.0;
+    }
+    if (
+      !(gnss_position_reacquisition_attitude_covariance_cap_yaw_ >= 0.0) ||
+      !std::isfinite(gnss_position_reacquisition_attitude_covariance_cap_yaw_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_reacquisition_attitude_covariance_cap_yaw=%f. disabling covariance cap",
+        gnss_position_reacquisition_attitude_covariance_cap_yaw_);
+      gnss_position_reacquisition_attitude_covariance_cap_yaw_ = 0.0;
     }
     if (
       !(gnss_position_innovation_adaptive_threshold_m_ >= 0.0) ||
@@ -1119,17 +1211,18 @@ struct EkfLocalizationComponent::Impl
     return std::min(max_scale, std::max(1.0, scale));
   }
 
-  double computeGnssReacquisitionVarianceScale(
+  bool updateGnssReacquisitionState(
     const geometry_msgs::msg::PoseStamped & pose_msg)
   {
     if (!(gnss_position_reacquisition_dt_sec_ > 0.0) ||
-      !(gnss_position_reacquisition_variance_scale_ > 1.0))
+      (!(gnss_position_reacquisition_variance_scale_ > 1.0) &&
+      !hasGnssReacquisitionCovarianceCap() &&
+      !gnss_position_reacquisition_reset_position_))
     {
-      return 1.0;
+      return false;
     }
 
     const double t = stampToSec(pose_msg.header.stamp);
-    double scale = 1.0;
     if (
       has_previous_gnss_position_time_ && std::isfinite(t) &&
       std::isfinite(previous_gnss_position_time_))
@@ -1145,10 +1238,20 @@ struct EkfLocalizationComponent::Impl
       has_previous_gnss_position_time_ = true;
     }
     if (gnss_position_reacquisition_updates_remaining_ > 0) {
-      scale = gnss_position_reacquisition_variance_scale_;
       --gnss_position_reacquisition_updates_remaining_;
+      return true;
     }
-    return scale;
+    return false;
+  }
+
+  bool hasGnssReacquisitionCovarianceCap() const
+  {
+    return gnss_position_reacquisition_covariance_cap_xy_ > 0.0 ||
+           gnss_position_reacquisition_covariance_cap_z_ > 0.0 ||
+           gnss_position_reacquisition_velocity_covariance_cap_xy_ > 0.0 ||
+           gnss_position_reacquisition_velocity_covariance_cap_z_ > 0.0 ||
+           gnss_position_reacquisition_attitude_covariance_cap_rp_ > 0.0 ||
+           gnss_position_reacquisition_attitude_covariance_cap_yaw_ > 0.0;
   }
 
   static double covarianceDiagAt(const Eigen::MatrixXd & covariance, const int index)
@@ -1380,14 +1483,50 @@ struct EkfLocalizationComponent::Impl
       pose_msg.pose.position.x,
       pose_msg.pose.position.y,
       pose_msg.pose.position.z);
+    const bool is_reacquisition_update = publish_gnss_debug ?
+      updateGnssReacquisitionState(pose_msg) : false;
+    if (is_reacquisition_update && hasGnssReacquisitionCovarianceCap()) {
+      if (!ekf_.capErrorStateCovariance(
+          gnss_position_reacquisition_covariance_cap_xy_,
+          gnss_position_reacquisition_covariance_cap_z_,
+          gnss_position_reacquisition_velocity_covariance_cap_xy_,
+          gnss_position_reacquisition_velocity_covariance_cap_z_,
+          gnss_position_reacquisition_attitude_covariance_cap_rp_,
+          gnss_position_reacquisition_attitude_covariance_cap_yaw_))
+      {
+        RCLCPP_WARN_THROTTLE(
+          node_.get_logger(), clock_, 5000,
+          "failed to cap GNSS reacquisition covariance: pos_xy=%f pos_z=%f",
+          gnss_position_reacquisition_covariance_cap_xy_,
+          gnss_position_reacquisition_covariance_cap_z_);
+      }
+    }
     const Eigen::Vector3d position_before_update = ekf_.getPosition();
     const Eigen::Vector3d innovation = y - position_before_update;
     const Eigen::MatrixXd covariance = ekf_.getCovariance();
     const double raw_nis = computePositionNis(innovation, variance, covariance);
     const StateSnapshot state_before = captureState();
     const double innovation_norm = innovation.norm();
-    const double reacquisition_variance_scale = publish_gnss_debug ?
-      computeGnssReacquisitionVarianceScale(pose_msg) : 1.0;
+    const double reacquisition_variance_scale =
+      (is_reacquisition_update && gnss_position_reacquisition_variance_scale_ > 1.0) ?
+      gnss_position_reacquisition_variance_scale_ : 1.0;
+
+    if (is_reacquisition_update && gnss_position_reacquisition_reset_position_) {
+      core::EKFEstimator::State state = ekf_.getState();
+      state.position = y;
+      if (gnss_position_reacquisition_reset_velocity_) {
+        state.velocity = Eigen::Vector3d::Zero();
+      }
+      ekf_.setState(state);
+      const UpdateDeltaExtra reset_extra = computePositionUpdateExtra(
+        covariance, innovation, Eigen::Vector3d::Zero(), variance, raw_nis, 0.0, 1.0);
+      if (publish_gnss_debug) {
+        publishGnssPositionDebug(
+          pose_msg, innovation, raw_nis, 1, variance, covariance, raw_nis, 1.0);
+        publishUpdateDeltaDebug(pose_msg.header.stamp, 4, 1, state_before, captureState(), reset_extra);
+      }
+      return;
+    }
 
     if (
       max_gnss_position_innovation_m_ > 0.0 && std::isfinite(innovation_norm) &&
@@ -1843,6 +1982,14 @@ struct EkfLocalizationComponent::Impl
   double gnss_position_reacquisition_dt_sec_{0.0};
   double gnss_position_reacquisition_variance_scale_{1.0};
   int gnss_position_reacquisition_update_count_{1};
+  double gnss_position_reacquisition_covariance_cap_xy_{0.0};
+  double gnss_position_reacquisition_covariance_cap_z_{0.0};
+  double gnss_position_reacquisition_velocity_covariance_cap_xy_{0.0};
+  double gnss_position_reacquisition_velocity_covariance_cap_z_{0.0};
+  double gnss_position_reacquisition_attitude_covariance_cap_rp_{0.0};
+  double gnss_position_reacquisition_attitude_covariance_cap_yaw_{0.0};
+  bool gnss_position_reacquisition_reset_position_{false};
+  bool gnss_position_reacquisition_reset_velocity_{false};
   double gnss_position_innovation_adaptive_threshold_m_{0.0};
   double max_gnss_position_innovation_variance_scale_{1.0};
   double gnss_course_yaw_nis_adaptive_threshold_{0.0};

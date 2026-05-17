@@ -227,6 +227,46 @@ TEST(EKFEstimatorCore, InitialBiasCovarianceSettersUpdateCovariance)
   EXPECT_NEAR(p_after_invalid(12, 12), 0.5, 1e-12);
 }
 
+TEST(EKFEstimatorCore, CapPositionCovarianceScalesPositionBlock)
+{
+  EKFEstimator ekf;
+
+  const Eigen::MatrixXd p_before = ekf.getCovariance();
+  ASSERT_GT(p_before(0, 0), 1.0);
+  ASSERT_GT(p_before(1, 1), 1.0);
+  ASSERT_GT(p_before(2, 2), 2.0);
+
+  EXPECT_TRUE(ekf.capPositionCovariance(1.0, 2.0));
+  const Eigen::MatrixXd p = ekf.getCovariance();
+  EXPECT_NEAR(p(0, 0), 1.0, 1e-12);
+  EXPECT_NEAR(p(1, 1), 1.0, 1e-12);
+  EXPECT_NEAR(p(2, 2), 2.0, 1e-12);
+
+  EXPECT_FALSE(ekf.capPositionCovariance(0.0, 1.0));
+  EXPECT_FALSE(ekf.capPositionCovariance(1.0, -1.0));
+}
+
+TEST(EKFEstimatorCore, CapErrorStateCovarianceScalesEnabledBlocks)
+{
+  EKFEstimator ekf;
+
+  EXPECT_TRUE(ekf.capErrorStateCovariance(1.0, 2.0, 3.0, 4.0, 0.01, 0.02));
+
+  const Eigen::MatrixXd p = ekf.getCovariance();
+  EXPECT_NEAR(p(0, 0), 1.0, 1e-12);
+  EXPECT_NEAR(p(1, 1), 1.0, 1e-12);
+  EXPECT_NEAR(p(2, 2), 2.0, 1e-12);
+  EXPECT_NEAR(p(3, 3), 3.0, 1e-12);
+  EXPECT_NEAR(p(4, 4), 3.0, 1e-12);
+  EXPECT_NEAR(p(5, 5), 4.0, 1e-12);
+  EXPECT_NEAR(p(6, 6), 0.01, 1e-12);
+  EXPECT_NEAR(p(7, 7), 0.01, 1e-12);
+  EXPECT_NEAR(p(8, 8), 0.02, 1e-12);
+
+  EXPECT_FALSE(ekf.capErrorStateCovariance(-1.0, 2.0, 0.0, 0.0, 0.0, 0.0));
+  EXPECT_FALSE(ekf.capErrorStateCovariance(0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
+}
+
 TEST(EKFEstimatorCore, OrientationObservationCanEstimateGyroBias)
 {
   EKFEstimator ekf;

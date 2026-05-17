@@ -181,7 +181,8 @@ public:
     x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dt_imu * x_.segment(STATE::VX, 3) +
       0.5 * dt_imu * dt_imu * (rot_mat * unbiased_acc - gravity_);
     // vel
-    x_.segment(STATE::VX, 3) = x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * unbiased_acc - gravity_);
+    x_.segment(STATE::VX, 3) =
+      x_.segment(STATE::VX, 3) + dt_imu * (rot_mat * unbiased_acc - gravity_);
     // quat
     const Eigen::Quaterniond predicted_quat = (previous_quat * quat_wdt).normalized();
     x_.segment(STATE::QX, 4) = Eigen::Vector4d(
@@ -594,6 +595,55 @@ public:
   Eigen::MatrixXd getCovariance() const
   {
     return P_;
+  }
+
+  bool capPositionCovariance(const double max_xy, const double max_z)
+  {
+    if (!(max_xy > 0.0) || !(max_z > 0.0) || !std::isfinite(max_xy) || !std::isfinite(max_z)) {
+      return false;
+    }
+    return capErrorStateCovariance(max_xy, max_z, 0.0, 0.0, 0.0, 0.0);
+  }
+
+  bool capErrorStateCovariance(
+    const double max_pos_xy,
+    const double max_pos_z,
+    const double max_vel_xy,
+    const double max_vel_z,
+    const double max_attitude_rp,
+    const double max_attitude_yaw)
+  {
+    const double caps[9] = {
+      max_pos_xy, max_pos_xy, max_pos_z,
+      max_vel_xy, max_vel_xy, max_vel_z,
+      max_attitude_rp, max_attitude_rp, max_attitude_yaw};
+    for (const double cap : caps) {
+      if (cap < 0.0 || !std::isfinite(cap)) {
+        return false;
+      }
+    }
+    if (max_pos_xy == 0.0 && max_pos_z == 0.0 && max_vel_xy == 0.0 && max_vel_z == 0.0 &&
+      max_attitude_rp == 0.0 && max_attitude_yaw == 0.0)
+    {
+      return false;
+    }
+
+    EigenMatrixErrorState scale = EigenMatrixErrorState::Identity();
+    bool changed = false;
+    for (int i = 0; i < 9; ++i) {
+      const double p = P_(i, i);
+      if (caps[i] > 0.0 && std::isfinite(p) && p > caps[i]) {
+        scale(i, i) = std::sqrt(caps[i] / p);
+        changed = true;
+      }
+    }
+    if (!changed) {
+      return true;
+    }
+
+    P_ = scale * P_ * scale;
+    P_ = 0.5 * (P_ + P_.transpose());
+    return true;
   }
 
   int getNumState() const

@@ -53,6 +53,14 @@ ekf_localization:
       gnss_position_reacquisition_dt_sec: 0.0  # 0 disables long-gap reacquisition R scaling
       gnss_position_reacquisition_variance_scale: 1.0
       gnss_position_reacquisition_update_count: 1
+      gnss_position_reacquisition_covariance_cap_xy: 0.0  # 0 disables long-gap covariance cap
+      gnss_position_reacquisition_covariance_cap_z: 0.0
+      gnss_position_reacquisition_velocity_covariance_cap_xy: 0.0
+      gnss_position_reacquisition_velocity_covariance_cap_z: 0.0
+      gnss_position_reacquisition_attitude_covariance_cap_rp: 0.0
+      gnss_position_reacquisition_attitude_covariance_cap_yaw: 0.0
+      gnss_position_reacquisition_reset_position: false
+      gnss_position_reacquisition_reset_velocity: false
       gnss_position_innovation_adaptive_threshold_m: 0.0  # 0 disables innovation-norm adaptive R
       max_gnss_position_innovation_variance_scale: 1.0
       var_odom_xyz: 0.2
