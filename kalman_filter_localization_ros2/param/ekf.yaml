@@ -31,6 +31,9 @@ ekf_localization:
       min_gnss_course_speed_mps: 0.5
       max_gnss_course_dt_sec: 1.0
       max_gnss_course_dyaw_rad: 3.14159265358979323846
+      max_gnss_course_yaw_nis: 0.0  # 0 disables hard NIS gate
+      gnss_course_yaw_nis_adaptive_threshold: 0.0  # 0 disables adaptive R
+      max_gnss_course_yaw_variance_scale: 1.0
       use_gnss_velocity: false
       propagate_gnss_velocity_cross_state: true
       var_gnss_velocity_xy: 0.25
@@ -42,6 +45,10 @@ ekf_localization:
       gravity_mps2: 9.80665
       var_gnss_xy: 0.1
       var_gnss_z: 0.15
+      max_gnss_position_nis: 0.0  # 0 disables hard NIS gate
+      gnss_position_nis_adaptive_threshold: 0.0  # 0 disables adaptive R
+      max_gnss_position_variance_scale: 1.0
       var_odom_xyz: 0.2
       use_gnss: true
       use_odom: false
+      publish_debug_topics: false

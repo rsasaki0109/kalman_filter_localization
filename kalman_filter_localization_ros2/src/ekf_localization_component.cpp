@@ -33,6 +33,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <Eigen/LU>
 
 #include <tf2/exceptions.h>
 #include <tf2/time.h>
@@ -52,6 +53,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/nav_sat_status.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 #include <rclcpp/qos.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -94,6 +96,11 @@ double getYawRadFromQuaternion(const Eigen::Quaterniond & q_in)
   const double siny_cosp = 2.0 * (q.w() * q.z() + q.x() * q.y());
   const double cosy_cosp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
   return std::atan2(siny_cosp, cosy_cosp);
+}
+
+double stampToSec(const builtin_interfaces::msg::Time & stamp)
+{
+  return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
 }
 
 bool isValidLatitudeLongitude(double latitude_deg, double longitude_deg)
@@ -245,12 +252,29 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("var_gnss_xy", var_gnss_xy_);
     node_.declare_parameter("var_gnss_z", 0.15);
     node_.get_parameter("var_gnss_z", var_gnss_z_);
+    node_.declare_parameter("max_gnss_position_nis", 0.0);
+    node_.get_parameter("max_gnss_position_nis", max_gnss_position_nis_);
+    node_.declare_parameter("gnss_position_nis_adaptive_threshold", 0.0);
+    node_.get_parameter(
+      "gnss_position_nis_adaptive_threshold", gnss_position_nis_adaptive_threshold_);
+    node_.declare_parameter("max_gnss_position_variance_scale", 1.0);
+    node_.get_parameter("max_gnss_position_variance_scale", max_gnss_position_variance_scale_);
+    node_.declare_parameter("max_gnss_course_yaw_nis", 0.0);
+    node_.get_parameter("max_gnss_course_yaw_nis", max_gnss_course_yaw_nis_);
+    node_.declare_parameter("gnss_course_yaw_nis_adaptive_threshold", 0.0);
+    node_.get_parameter(
+      "gnss_course_yaw_nis_adaptive_threshold", gnss_course_yaw_nis_adaptive_threshold_);
+    node_.declare_parameter("max_gnss_course_yaw_variance_scale", 1.0);
+    node_.get_parameter(
+      "max_gnss_course_yaw_variance_scale", max_gnss_course_yaw_variance_scale_);
     node_.declare_parameter("var_odom_xyz", 0.2);
     node_.get_parameter("var_odom_xyz", var_odom_xyz_);
     node_.declare_parameter("use_gnss", true);
     node_.get_parameter("use_gnss", use_gnss_);
     node_.declare_parameter("use_odom", false);
     node_.get_parameter("use_odom", use_odom_);
+    node_.declare_parameter("publish_debug_topics", false);
+    node_.get_parameter("publish_debug_topics", publish_debug_topics_);
     node_.declare_parameter("output_stamp_source", "latest_input");
     node_.get_parameter("output_stamp_source", output_stamp_source_);
     if (
@@ -380,6 +404,60 @@ struct EkfLocalizationComponent::Impl
         gravity_mps2_);
       gravity_mps2_ = 9.80665;
     }
+    if (!(max_gnss_position_nis_ >= 0.0) || !std::isfinite(max_gnss_position_nis_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_position_nis=%f. disabling GNSS position NIS gate",
+        max_gnss_position_nis_);
+      max_gnss_position_nis_ = 0.0;
+    }
+    if (
+      !(gnss_position_nis_adaptive_threshold_ >= 0.0) ||
+      !std::isfinite(gnss_position_nis_adaptive_threshold_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_position_nis_adaptive_threshold=%f. disabling adaptive GNSS position covariance",
+        gnss_position_nis_adaptive_threshold_);
+      gnss_position_nis_adaptive_threshold_ = 0.0;
+    }
+    if (
+      !(max_gnss_position_variance_scale_ >= 1.0) ||
+      !std::isfinite(max_gnss_position_variance_scale_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_position_variance_scale=%f. fallback to 1.0",
+        max_gnss_position_variance_scale_);
+      max_gnss_position_variance_scale_ = 1.0;
+    }
+    if (!(max_gnss_course_yaw_nis_ >= 0.0) || !std::isfinite(max_gnss_course_yaw_nis_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_course_yaw_nis=%f. disabling GNSS course-yaw NIS gate",
+        max_gnss_course_yaw_nis_);
+      max_gnss_course_yaw_nis_ = 0.0;
+    }
+    if (
+      !(gnss_course_yaw_nis_adaptive_threshold_ >= 0.0) ||
+      !std::isfinite(gnss_course_yaw_nis_adaptive_threshold_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gnss_course_yaw_nis_adaptive_threshold=%f. disabling adaptive GNSS course-yaw covariance",
+        gnss_course_yaw_nis_adaptive_threshold_);
+      gnss_course_yaw_nis_adaptive_threshold_ = 0.0;
+    }
+    if (
+      !(max_gnss_course_yaw_variance_scale_ >= 1.0) ||
+      !std::isfinite(max_gnss_course_yaw_variance_scale_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_gnss_course_yaw_variance_scale=%f. fallback to 1.0",
+        max_gnss_course_yaw_variance_scale_);
+      max_gnss_course_yaw_variance_scale_ = 1.0;
+    }
     if (!(var_imu_gyro_bias_ >= 0.0) || !std::isfinite(var_imu_gyro_bias_)) {
       RCLCPP_WARN(
         node_.get_logger(),
@@ -473,6 +551,15 @@ struct EkfLocalizationComponent::Impl
       node_.get_name() + std::string("/current_accel_bias");
     current_accel_bias_pub_ =
       node_.create_publisher<geometry_msgs::msg::Vector3Stamped>(output_accel_bias_name, 10);
+    if (publish_debug_topics_) {
+      const std::string debug_prefix = node_.get_name() + std::string("/debug/");
+      debug_gnss_position_pub_ =
+        node_.create_publisher<std_msgs::msg::Float64MultiArray>(
+        debug_prefix + std::string("gnss_position"), 10);
+      debug_gnss_course_yaw_pub_ =
+        node_.create_publisher<std_msgs::msg::Float64MultiArray>(
+        debug_prefix + std::string("gnss_course_yaw"), 10);
+    }
 
     // Setup Subscriber
     auto initial_pose_callback =
@@ -806,7 +893,7 @@ struct EkfLocalizationComponent::Impl
   void handleGnssPose(const geometry_msgs::msg::PoseStamped & pose_msg)
   {
     if (initial_pose_received_ && use_gnss_) {
-      measurementUpdate(pose_msg, var_gnss_);
+      measurementUpdate(pose_msg, var_gnss_, true);
       if (use_gnss_velocity_) {
         updateVelocityFromGnss(pose_msg);
       }
@@ -816,9 +903,139 @@ struct EkfLocalizationComponent::Impl
     }
   }
 
+  static double computePositionNis(
+    const Eigen::Vector3d & innovation,
+    const Eigen::Vector3d & variance,
+    const Eigen::MatrixXd & covariance)
+  {
+    if (covariance.rows() < 3 || covariance.cols() < 3) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    Eigen::Matrix3d s = covariance.block<3, 3>(0, 0);
+    s(0, 0) += variance.x();
+    s(1, 1) += variance.y();
+    s(2, 2) += variance.z();
+    if (!s.allFinite()) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    const Eigen::FullPivLU<Eigen::Matrix3d> lu(s);
+    if (!lu.isInvertible()) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    return innovation.transpose() * lu.inverse() * innovation;
+  }
+
+  static double computeYawNis(
+    const double innovation,
+    const double variance,
+    const Eigen::MatrixXd & covariance)
+  {
+    constexpr int kErrorStateYawIndex = 8;
+    if (covariance.rows() <= kErrorStateYawIndex || covariance.cols() <= kErrorStateYawIndex) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double s = covariance(kErrorStateYawIndex, kErrorStateYawIndex) + variance;
+    if (!(s > 0.0) || !std::isfinite(s)) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    return innovation * innovation / s;
+  }
+
+  static double computeAdaptiveVarianceScale(
+    const double nis,
+    const double threshold,
+    const double max_scale)
+  {
+    if (!(threshold > 0.0) || !(max_scale > 1.0) || !std::isfinite(nis)) {
+      return 1.0;
+    }
+    if (nis <= threshold) {
+      return 1.0;
+    }
+    const double scale = std::sqrt(nis / threshold);
+    return std::min(max_scale, std::max(1.0, scale));
+  }
+
+  void publishGnssPositionDebug(
+    const geometry_msgs::msg::PoseStamped & pose_msg,
+    const Eigen::Vector3d & innovation,
+    const double nis,
+    const int status_code,
+    const Eigen::Vector3d & variance,
+    const Eigen::MatrixXd & covariance,
+    const double raw_nis,
+    const double variance_scale)
+  {
+    if (!debug_gnss_position_pub_) {
+      return;
+    }
+    std_msgs::msg::Float64MultiArray msg;
+    msg.data = {
+      stampToSec(pose_msg.header.stamp),
+      innovation.x(),
+      innovation.y(),
+      innovation.z(),
+      nis,
+      static_cast<double>(status_code),
+      variance.x(),
+      variance.y(),
+      variance.z(),
+      covariance.rows() > 0 && covariance.cols() > 0 ? covariance(0, 0) :
+        std::numeric_limits<double>::quiet_NaN(),
+      covariance.rows() > 1 && covariance.cols() > 1 ? covariance(1, 1) :
+        std::numeric_limits<double>::quiet_NaN(),
+      covariance.rows() > 2 && covariance.cols() > 2 ? covariance(2, 2) :
+        std::numeric_limits<double>::quiet_NaN(),
+      raw_nis,
+      variance_scale};
+    debug_gnss_position_pub_->publish(msg);
+  }
+
+  void publishGnssCourseYawDebug(
+    const geometry_msgs::msg::PoseStamped & pose_msg,
+    const double yaw_meas,
+    const double yaw_est,
+    const double innovation,
+    const double nis,
+    const int status_code,
+    const int reason_code,
+    const double dt,
+    const double distance,
+    const double speed,
+    const Eigen::MatrixXd & covariance,
+    const double variance,
+    const double raw_nis = std::numeric_limits<double>::quiet_NaN(),
+    const double variance_scale = 1.0)
+  {
+    if (!debug_gnss_course_yaw_pub_) {
+      return;
+    }
+    constexpr int kErrorStateYawIndex = 8;
+    std_msgs::msg::Float64MultiArray msg;
+    msg.data = {
+      stampToSec(pose_msg.header.stamp),
+      yaw_meas,
+      yaw_est,
+      innovation,
+      nis,
+      static_cast<double>(status_code),
+      static_cast<double>(reason_code),
+      dt,
+      distance,
+      speed,
+      variance,
+      covariance.rows() > kErrorStateYawIndex && covariance.cols() > kErrorStateYawIndex ?
+        covariance(kErrorStateYawIndex, kErrorStateYawIndex) :
+        std::numeric_limits<double>::quiet_NaN(),
+      raw_nis,
+      variance_scale};
+    debug_gnss_course_yaw_pub_->publish(msg);
+  }
+
   void measurementUpdate(
     const geometry_msgs::msg::PoseStamped & pose_msg,
-    const Eigen::Vector3d & variance)
+    const Eigen::Vector3d & variance,
+    const bool publish_gnss_debug = false)
   {
     has_received_input_ = true;
     current_stamp_ = pose_msg.header.stamp;
@@ -826,19 +1043,53 @@ struct EkfLocalizationComponent::Impl
       pose_msg.pose.position.x,
       pose_msg.pose.position.y,
       pose_msg.pose.position.z);
+    const Eigen::Vector3d innovation = y - ekf_.getPosition();
+    const Eigen::MatrixXd covariance = ekf_.getCovariance();
+    const double raw_nis = computePositionNis(innovation, variance, covariance);
 
-    const auto status = ekf_.observationUpdateWithStatus(y, variance);
+    if (
+      publish_gnss_debug && max_gnss_position_nis_ > 0.0 &&
+      std::isfinite(raw_nis) && raw_nis > max_gnss_position_nis_)
+    {
+      publishGnssPositionDebug(pose_msg, innovation, raw_nis, 0, variance, covariance, raw_nis, 1.0);
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), clock_, 5000,
+        "skip GNSS position update due to large NIS: nis=%f > max=%f",
+        raw_nis, max_gnss_position_nis_);
+      return;
+    }
+
+    const double variance_scale = computeAdaptiveVarianceScale(
+      raw_nis,
+      gnss_position_nis_adaptive_threshold_,
+      max_gnss_position_variance_scale_);
+    const Eigen::Vector3d used_variance = variance * variance_scale;
+    const double used_nis = computePositionNis(innovation, used_variance, covariance);
+
+    const auto status = ekf_.observationUpdateWithStatus(y, used_variance);
     if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+      if (publish_gnss_debug) {
+        publishGnssPositionDebug(
+          pose_msg, innovation, used_nis, -1, used_variance, covariance, raw_nis, variance_scale);
+      }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF observation update due to invalid measurement (NaN/Inf)");
       return;
     }
     if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+      if (publish_gnss_debug) {
+        publishGnssPositionDebug(
+          pose_msg, innovation, used_nis, -2, used_variance, covariance, raw_nis, variance_scale);
+      }
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF observation update due to invalid variance (need finite positive)");
       return;
+    }
+    if (publish_gnss_debug) {
+      publishGnssPositionDebug(
+        pose_msg, innovation, used_nis, 1, used_variance, covariance, raw_nis, variance_scale);
     }
   }
 
@@ -853,6 +1104,19 @@ struct EkfLocalizationComponent::Impl
       course_base_gnss_x_ = x;
       course_base_gnss_y_ = y;
       has_course_base_gnss_ = true;
+      publishGnssCourseYawDebug(
+        pose_msg,
+        std::numeric_limits<double>::quiet_NaN(),
+        getYawRadFromQuaternion(ekf_.getOrientation().normalized()),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        0,
+        1,
+        std::numeric_limits<double>::quiet_NaN(),
+        0.0,
+        std::numeric_limits<double>::quiet_NaN(),
+        ekf_.getCovariance(),
+        var_gnss_course_yaw_);
       return;
     }
 
@@ -862,6 +1126,19 @@ struct EkfLocalizationComponent::Impl
       course_base_gnss_time_ = t;
       course_base_gnss_x_ = x;
       course_base_gnss_y_ = y;
+      publishGnssCourseYawDebug(
+        pose_msg,
+        std::numeric_limits<double>::quiet_NaN(),
+        getYawRadFromQuaternion(ekf_.getOrientation().normalized()),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        0,
+        2,
+        dt,
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        ekf_.getCovariance(),
+        var_gnss_course_yaw_);
       return;
     }
 
@@ -870,11 +1147,37 @@ struct EkfLocalizationComponent::Impl
     const double dist = std::hypot(dx, dy);
     if (dist < min_gnss_course_distance_m_) {
       // Accumulate until we have enough displacement.
+      publishGnssCourseYawDebug(
+        pose_msg,
+        std::numeric_limits<double>::quiet_NaN(),
+        getYawRadFromQuaternion(ekf_.getOrientation().normalized()),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        0,
+        3,
+        dt,
+        dist,
+        dist / dt,
+        ekf_.getCovariance(),
+        var_gnss_course_yaw_);
       return;
     }
 
     const double speed = dist / dt;
     if (speed < min_gnss_course_speed_mps_) {
+      publishGnssCourseYawDebug(
+        pose_msg,
+        std::numeric_limits<double>::quiet_NaN(),
+        getYawRadFromQuaternion(ekf_.getOrientation().normalized()),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        0,
+        4,
+        dt,
+        dist,
+        speed,
+        ekf_.getCovariance(),
+        var_gnss_course_yaw_);
       return;
     }
 
@@ -882,7 +1185,61 @@ struct EkfLocalizationComponent::Impl
     const Eigen::Quaterniond q_est = ekf_.getOrientation().normalized();
     const double yaw_est = getYawRadFromQuaternion(q_est);
     const double dyaw = wrapToPi(yaw_meas - yaw_est);
+    const Eigen::MatrixXd covariance = ekf_.getCovariance();
+    const double raw_nis = computeYawNis(dyaw, var_gnss_course_yaw_, covariance);
+    if (
+      max_gnss_course_yaw_nis_ > 0.0 && std::isfinite(raw_nis) &&
+      raw_nis > max_gnss_course_yaw_nis_)
+    {
+      publishGnssCourseYawDebug(
+        pose_msg,
+        yaw_meas,
+        yaw_est,
+        dyaw,
+        raw_nis,
+        0,
+        6,
+        dt,
+        dist,
+        speed,
+        covariance,
+        var_gnss_course_yaw_,
+        raw_nis,
+        1.0);
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(),
+        clock_,
+        5000,
+        "skip GNSS course yaw update due to large NIS: nis=%f > max=%f",
+        raw_nis,
+        max_gnss_course_yaw_nis_);
+      course_base_gnss_time_ = t;
+      course_base_gnss_x_ = x;
+      course_base_gnss_y_ = y;
+      return;
+    }
+    const double variance_scale = computeAdaptiveVarianceScale(
+      raw_nis,
+      gnss_course_yaw_nis_adaptive_threshold_,
+      max_gnss_course_yaw_variance_scale_);
+    const double used_yaw_variance = var_gnss_course_yaw_ * variance_scale;
+    const double used_nis = computeYawNis(dyaw, used_yaw_variance, covariance);
     if (std::fabs(dyaw) > max_gnss_course_dyaw_rad_) {
+      publishGnssCourseYawDebug(
+        pose_msg,
+        yaw_meas,
+        yaw_est,
+        dyaw,
+        used_nis,
+        0,
+        5,
+        dt,
+        dist,
+        speed,
+        covariance,
+        used_yaw_variance,
+        raw_nis,
+        variance_scale);
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(),
         clock_,
@@ -900,8 +1257,29 @@ struct EkfLocalizationComponent::Impl
     // body-frame innovation when the EKF uses right-multiplicative error state updates.
     const Eigen::Quaterniond dq_world_yaw(Eigen::AngleAxisd(dyaw, Eigen::Vector3d::UnitZ()));
     const Eigen::Quaterniond q_meas = (dq_world_yaw * q_est).normalized();
-    const Eigen::Vector3d var_rpy_rad2(1.0e6, 1.0e6, var_gnss_course_yaw_);
-    (void)ekf_.observationUpdateOrientationWithStatus(q_meas, var_rpy_rad2);
+    const Eigen::Vector3d var_rpy_rad2(1.0e6, 1.0e6, used_yaw_variance);
+    const auto status = ekf_.observationUpdateOrientationWithStatus(q_meas, var_rpy_rad2);
+    int status_code = 1;
+    if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+      status_code = -1;
+    } else if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+      status_code = -2;
+    }
+    publishGnssCourseYawDebug(
+      pose_msg,
+      yaw_meas,
+      yaw_est,
+      dyaw,
+      used_nis,
+      status_code,
+      0,
+      dt,
+      dist,
+      speed,
+      covariance,
+      used_yaw_variance,
+      raw_nis,
+      variance_scale);
 
     // Update the base point after applying the measurement.
     course_base_gnss_time_ = t;
@@ -1068,12 +1446,19 @@ struct EkfLocalizationComponent::Impl
   double gravity_mps2_{0.0};
   double var_gnss_xy_{0.0};
   double var_gnss_z_{0.0};
+  double max_gnss_position_nis_{0.0};
+  double max_gnss_course_yaw_nis_{0.0};
+  double gnss_position_nis_adaptive_threshold_{0.0};
+  double max_gnss_position_variance_scale_{1.0};
+  double gnss_course_yaw_nis_adaptive_threshold_{0.0};
+  double max_gnss_course_yaw_variance_scale_{1.0};
   Eigen::Vector3d var_gnss_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d var_gnss_velocity_{Eigen::Vector3d::Zero()};
   double var_odom_xyz_{0.0};
   Eigen::Vector3d var_odom_{Eigen::Vector3d::Zero()};
   bool use_gnss_{false};
   bool use_odom_{false};
+  bool publish_debug_topics_{false};
   std::string output_stamp_source_{"latest_input"};
 
   bool initial_pose_received_{false};
@@ -1107,6 +1492,8 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_position_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_course_yaw_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;

@@ -27,6 +27,7 @@ find_package(tf2_eigen REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 # NOTE: Eigen is pulled in transitively via kalman_filter_localization_core.
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -56,7 +57,7 @@ target_include_directories(ekf_localization_component PUBLIC
 # Exported library: use keyword signature so transitive deps propagate.
 target_link_libraries(ekf_localization_component PUBLIC kalman_filter_localization_core::core)
 ament_target_dependencies(ekf_localization_component PUBLIC
-  rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
+  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 add_executable(ekf_localization_node
 src/ekf_localization_node.cpp
@@ -66,7 +67,7 @@ target_link_libraries(ekf_localization_node
 ekf_localization_component)
 
 ament_target_dependencies(ekf_localization_node
-  rclcpp rclcpp_components nav_msgs sensor_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
+  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 rclcpp_components_register_nodes(ekf_localization_component
   "kalman_filter_localization::EkfLocalizationComponent")
@@ -106,6 +107,7 @@ ament_export_dependencies(tf2_ros)
 ament_export_dependencies(sensor_msgs)
 ament_export_dependencies(nav_msgs)
 ament_export_dependencies(geometry_msgs)
+ament_export_dependencies(std_msgs)
 ament_export_include_directories(include)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
