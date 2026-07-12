@@ -32,6 +32,15 @@ jobs:
                   colcon build
                   source ~/ros2_ws/install/setup.bash
               shell: bash
+            - name: Test localization evaluator
+              run: |
+                  source /opt/ros/humble/setup.bash
+                  source ~/ros2_ws/install/setup.bash
+                  cd ~/ros2_ws
+                  colcon test --packages-select kalman_filter_localization \
+                    --ctest-args -R test_evaluate_localization
+                  colcon test-result --verbose
+              shell: bash
 
     job2:
         name: Build
@@ -59,4 +68,13 @@ jobs:
                   cd ~/ros2_ws
                   colcon build
                   source ~/ros2_ws/install/setup.bash
+              shell: bash
+            - name: Test localization evaluator
+              run: |
+                  source /opt/ros/jazzy/setup.bash
+                  source ~/ros2_ws/install/setup.bash
+                  cd ~/ros2_ws
+                  colcon test --packages-select kalman_filter_localization \
+                    --ctest-args -R test_evaluate_localization
+                  colcon test-result --verbose
               shell: bash

@@ -12,6 +12,8 @@ ekf_localization:
       imu_topic: "imu"
       odom_topic: "odom"
       pub_period: 10
+      output_odometry_topic: "/current_odometry"
+      publish_tf: false
       var_imu_w: 0.01
       var_imu_acc: 0.01
       var_imu_gyro_bias: 0.0
@@ -65,5 +67,10 @@ ekf_localization:
       max_gnss_position_innovation_variance_scale: 1.0
       var_odom_xyz: 0.2
       use_gnss: true
+      use_gnss_doppler_velocity: false
+      gnss_doppler_velocity_topic: "/gnss/velocity"
+      use_gnss_doppler_velocity_covariance: true
+      use_gnss_doppler_course_yaw: false
+      min_gnss_doppler_course_speed_mps: 1.0
       use_odom: false
       publish_debug_topics: false
