@@ -38,6 +38,7 @@
 #include <tf2/exceptions.h>
 #include <tf2/time.h>
 #include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
 #include <algorithm>
@@ -50,6 +51,7 @@
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -278,6 +280,19 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("max_gnss_course_dyaw_rad", max_gnss_course_dyaw_rad_);
     node_.declare_parameter("use_gnss_velocity", false);
     node_.get_parameter("use_gnss_velocity", use_gnss_velocity_);
+    node_.declare_parameter("use_gnss_doppler_velocity", false);
+    node_.get_parameter("use_gnss_doppler_velocity", use_gnss_doppler_velocity_);
+    node_.declare_parameter(
+      "gnss_doppler_velocity_topic", node_.get_name() + std::string("/gnss/velocity"));
+    node_.get_parameter("gnss_doppler_velocity_topic", gnss_doppler_velocity_topic_);
+    node_.declare_parameter("use_gnss_doppler_velocity_covariance", true);
+    node_.get_parameter(
+      "use_gnss_doppler_velocity_covariance", use_gnss_doppler_velocity_covariance_);
+    node_.declare_parameter("use_gnss_doppler_course_yaw", false);
+    node_.get_parameter("use_gnss_doppler_course_yaw", use_gnss_doppler_course_yaw_);
+    node_.declare_parameter("min_gnss_doppler_course_speed_mps", 1.0);
+    node_.get_parameter(
+      "min_gnss_doppler_course_speed_mps", min_gnss_doppler_course_speed_mps_);
     node_.declare_parameter("propagate_gnss_velocity_cross_state", true);
     node_.get_parameter(
       "propagate_gnss_velocity_cross_state", propagate_gnss_velocity_cross_state_);
@@ -378,6 +393,11 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("publish_debug_topics", publish_debug_topics_);
     node_.declare_parameter("output_stamp_source", "latest_input");
     node_.get_parameter("output_stamp_source", output_stamp_source_);
+    node_.declare_parameter(
+      "output_odometry_topic", node_.get_name() + std::string("/current_odometry"));
+    node_.get_parameter("output_odometry_topic", output_odometry_topic_);
+    node_.declare_parameter("publish_tf", false);
+    node_.get_parameter("publish_tf", publish_tf_);
     if (
       output_stamp_source_ != "latest_input" &&
       output_stamp_source_ != "imu" &&
@@ -456,7 +476,7 @@ struct EkfLocalizationComponent::Impl
         max_gnss_course_dyaw_rad_ = kPi;
       }
     }
-    if (use_gnss_velocity_) {
+    if (use_gnss_velocity_ || use_gnss_doppler_velocity_) {
       if (!(var_gnss_velocity_xy_ > 0.0) || !std::isfinite(var_gnss_velocity_xy_)) {
         RCLCPP_WARN(
           node_.get_logger(),
@@ -496,6 +516,16 @@ struct EkfLocalizationComponent::Impl
           max_gnss_velocity_innovation_mps_);
         max_gnss_velocity_innovation_mps_ = 5.0;
       }
+    }
+    if (
+      !(min_gnss_doppler_course_speed_mps_ >= 0.0) ||
+      !std::isfinite(min_gnss_doppler_course_speed_mps_))
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter min_gnss_doppler_course_speed_mps=%f. fallback to 1.0",
+        min_gnss_doppler_course_speed_mps_);
+      min_gnss_doppler_course_speed_mps_ = 1.0;
     }
 
     if (!std::isfinite(gravity_mps2_) || gravity_mps2_ < 0.0) {
@@ -771,6 +801,11 @@ struct EkfLocalizationComponent::Impl
     const std::string output_pose_name = node_.get_name() + std::string("/current_pose");
     current_pose_pub_ =
       node_.create_publisher<geometry_msgs::msg::PoseStamped>(output_pose_name, 10);
+    current_odometry_pub_ =
+      node_.create_publisher<nav_msgs::msg::Odometry>(output_odometry_topic_, 10);
+    if (publish_tf_) {
+      tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
+    }
     const std::string output_gyro_bias_name =
       node_.get_name() + std::string("/current_gyro_bias");
     current_gyro_bias_pub_ =
@@ -943,6 +978,43 @@ struct EkfLocalizationComponent::Impl
         }
       };
 
+    auto gnss_doppler_velocity_callback =
+      [this](const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg) -> void
+      {
+        if (!initial_pose_received_ || !use_gnss_ || !use_gnss_doppler_velocity_) {
+          return;
+        }
+        if (!msg->header.frame_id.empty() && msg->header.frame_id != reference_frame_id_) {
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000,
+            "skip GNSS Doppler velocity in frame '%s'; expected '%s'",
+            msg->header.frame_id.c_str(), reference_frame_id_.c_str());
+          return;
+        }
+        const Eigen::Vector3d velocity(
+          msg->twist.twist.linear.x,
+          msg->twist.twist.linear.y,
+          msg->twist.twist.linear.z);
+        Eigen::Vector3d variance = var_gnss_velocity_;
+        if (use_gnss_doppler_velocity_covariance_) {
+          const Eigen::Vector3d message_variance(
+            msg->twist.covariance[0],
+            msg->twist.covariance[7],
+            msg->twist.covariance[14]);
+          if ((message_variance.array() > 0.0).all() && message_variance.allFinite()) {
+            variance = message_variance;
+          } else {
+            RCLCPP_WARN_THROTTLE(
+              node_.get_logger(), clock_, 5000,
+              "invalid GNSS Doppler velocity covariance; using configured variances");
+          }
+        }
+        updateVelocityMeasurement(velocity, variance, "GNSS Doppler");
+        if (use_gnss_doppler_course_yaw_) {
+          updateYawFromDopplerVelocity(velocity, variance, msg->header.stamp);
+        }
+      };
+
     sub_initial_pose_ =
       node_.create_subscription<geometry_msgs::msg::PoseStamped>(
       initial_pose_topic_, 1,
@@ -971,6 +1043,16 @@ struct EkfLocalizationComponent::Impl
         node_.create_subscription<geometry_msgs::msg::PoseStamped>(
         gnss_pose_topic_, 1,
         gnss_pose_callback);
+    }
+    if (use_gnss_doppler_velocity_) {
+      rclcpp::SensorDataQoS velocity_qos;
+      velocity_qos.keep_last(1);
+      sub_gnss_doppler_velocity_ =
+        node_.create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
+        gnss_doppler_velocity_topic_, velocity_qos, gnss_doppler_velocity_callback);
+      RCLCPP_INFO(
+        node_.get_logger(), "GNSS Doppler velocity input: '%s' in frame '%s'",
+        gnss_doppler_velocity_topic_.c_str(), reference_frame_id_.c_str());
     }
     const std::chrono::milliseconds period(pub_period_);
     timer_ = node_.create_wall_timer(
@@ -1851,34 +1933,110 @@ struct EkfLocalizationComponent::Impl
       return;
     }
 
+    updateVelocityMeasurement(velocity_meas, var_gnss_velocity_, "GNSS position-derived");
+
+    previous_velocity_gnss_time_ = t;
+    previous_velocity_gnss_position_ = position;
+  }
+
+  void updateVelocityMeasurement(
+    const Eigen::Vector3d & velocity_meas,
+    const Eigen::Vector3d & variance,
+    const char * source)
+  {
+    if (!velocity_meas.allFinite()) {
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), clock_, 5000, "skip invalid %s velocity measurement", source);
+      return;
+    }
     const double innovation_norm = (velocity_meas - ekf_.getVelocity()).norm();
     if (innovation_norm > max_gnss_velocity_innovation_mps_) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(),
         clock_,
         5000,
-        "skip GNSS velocity update due to large innovation: |dv|=%f [m/s] > max=%f [m/s]",
+        "skip %s velocity update due to large innovation: |dv|=%f [m/s] > max=%f [m/s]",
+        source,
         innovation_norm,
         max_gnss_velocity_innovation_mps_);
-      previous_velocity_gnss_time_ = t;
-      previous_velocity_gnss_position_ = position;
       return;
     }
 
     const auto status = ekf_.observationUpdateVelocityWithStatus(
-      velocity_meas, var_gnss_velocity_, propagate_gnss_velocity_cross_state_);
+      velocity_meas, variance, propagate_gnss_velocity_cross_state_);
     if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
-        "skip EKF velocity update due to invalid GNSS velocity measurement");
+        "skip EKF velocity update due to invalid %s velocity measurement", source);
     } else if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
-        "skip EKF velocity update due to invalid GNSS velocity variance");
+        "skip EKF velocity update due to invalid %s velocity variance", source);
+    }
+  }
+
+  void updateYawFromDopplerVelocity(
+    const Eigen::Vector3d & velocity,
+    const Eigen::Vector3d & velocity_variance,
+    const builtin_interfaces::msg::Time & stamp)
+  {
+    const double speed_squared = velocity.x() * velocity.x() + velocity.y() * velocity.y();
+    const double speed = std::sqrt(speed_squared);
+    if (!std::isfinite(speed) || speed < min_gnss_doppler_course_speed_mps_) {
+      return;
     }
 
-    previous_velocity_gnss_time_ = t;
-    previous_velocity_gnss_position_ = position;
+    const double yaw_meas = std::atan2(velocity.y(), velocity.x());
+    const Eigen::Quaterniond q_est = ekf_.getOrientation().normalized();
+    const double yaw_est = getYawRadFromQuaternion(q_est);
+    const double dyaw = wrapToPi(yaw_meas - yaw_est);
+    if (std::fabs(dyaw) > max_gnss_course_dyaw_rad_) {
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), clock_, 5000,
+        "skip GNSS Doppler course yaw due to large innovation: |dyaw|=%f > max=%f [rad]",
+        std::fabs(dyaw), max_gnss_course_dyaw_rad_);
+      return;
+    }
+
+    double yaw_variance =
+      (velocity.y() * velocity.y() * velocity_variance.x() +
+      velocity.x() * velocity.x() * velocity_variance.y()) /
+      (speed_squared * speed_squared);
+    if (!(yaw_variance > 0.0) || !std::isfinite(yaw_variance)) {
+      yaw_variance = var_gnss_course_yaw_;
+    }
+    yaw_variance = std::max(yaw_variance, 1.0e-6);
+    const Eigen::MatrixXd covariance = ekf_.getCovariance();
+    const double raw_nis = computeYawNis(dyaw, yaw_variance, covariance);
+    if (
+      max_gnss_course_yaw_nis_ > 0.0 && std::isfinite(raw_nis) &&
+      raw_nis > max_gnss_course_yaw_nis_)
+    {
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), clock_, 5000,
+        "skip GNSS Doppler course yaw due to large NIS: nis=%f > max=%f",
+        raw_nis, max_gnss_course_yaw_nis_);
+      return;
+    }
+    const double variance_scale = computeAdaptiveVarianceScale(
+      raw_nis,
+      gnss_course_yaw_nis_adaptive_threshold_,
+      max_gnss_course_yaw_variance_scale_);
+    yaw_variance *= variance_scale;
+
+    const StateSnapshot state_before = captureState();
+    const Eigen::Quaterniond yaw_delta(Eigen::AngleAxisd(dyaw, Eigen::Vector3d::UnitZ()));
+    const Eigen::Quaterniond q_meas = (yaw_delta * q_est).normalized();
+    const Eigen::Vector3d orientation_variance(1.0e6, 1.0e6, yaw_variance);
+    const auto status =
+      ekf_.observationUpdateOrientationWithStatus(q_meas, orientation_variance);
+    int status_code = 1;
+    if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+      status_code = -1;
+    } else if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+      status_code = -2;
+    }
+    publishUpdateDeltaDebug(stamp, 4, status_code, state_before, captureState());
   }
 
   void broadcastPose()
@@ -1908,6 +2066,44 @@ struct EkfLocalizationComponent::Impl
     current_pose_pub_->publish(current_pose_);
 
     const auto state = ekf_.getState();
+    const Eigen::MatrixXd covariance = ekf_.getCovariance();
+    nav_msgs::msg::Odometry odometry_msg;
+    odometry_msg.header = current_pose_.header;
+    odometry_msg.child_frame_id = robot_frame_id_;
+    odometry_msg.pose.pose = current_pose_.pose;
+    for (int row = 0; row < 3; ++row) {
+      for (int col = 0; col < 3; ++col) {
+        odometry_msg.pose.covariance[row * 6 + col] = covariance(row, col);
+        odometry_msg.pose.covariance[(row + 3) * 6 + col + 3] =
+          covariance(row + 6, col + 6);
+      }
+    }
+    const Eigen::Matrix3d world_from_body = state.orientation.normalized().toRotationMatrix();
+    const Eigen::Vector3d body_velocity = world_from_body.transpose() * state.velocity;
+    const Eigen::Matrix3d body_velocity_covariance =
+      world_from_body.transpose() * covariance.block<3, 3>(3, 3) * world_from_body;
+    odometry_msg.twist.twist.linear.x = body_velocity.x();
+    odometry_msg.twist.twist.linear.y = body_velocity.y();
+    odometry_msg.twist.twist.linear.z = body_velocity.z();
+    for (int row = 0; row < 3; ++row) {
+      for (int col = 0; col < 3; ++col) {
+        odometry_msg.twist.covariance[row * 6 + col] = body_velocity_covariance(row, col);
+      }
+      odometry_msg.twist.covariance[(row + 3) * 6 + row + 3] = 1.0e6;
+    }
+    current_odometry_pub_->publish(odometry_msg);
+
+    if (tf_broadcaster_) {
+      geometry_msgs::msg::TransformStamped transform;
+      transform.header = current_pose_.header;
+      transform.child_frame_id = robot_frame_id_;
+      transform.transform.translation.x = current_pose_.pose.position.x;
+      transform.transform.translation.y = current_pose_.pose.position.y;
+      transform.transform.translation.z = current_pose_.pose.position.z;
+      transform.transform.rotation = current_pose_.pose.orientation;
+      tf_broadcaster_->sendTransform(transform);
+    }
+
     geometry_msgs::msg::Vector3Stamped gyro_bias_msg;
     gyro_bias_msg.header = current_pose_.header;
     gyro_bias_msg.header.frame_id = robot_frame_id_;
@@ -1935,6 +2131,7 @@ struct EkfLocalizationComponent::Impl
   std::string gnss_pose_topic_;
   std::string gnss_input_type_;
   std::string gnss_navsatfix_topic_;
+  std::string gnss_doppler_velocity_topic_;
   bool gnss_navsatfix_use_first_fix_as_origin_{true};
   double gnss_navsatfix_origin_latitude_{std::numeric_limits<double>::quiet_NaN()};
   double gnss_navsatfix_origin_longitude_{std::numeric_limits<double>::quiet_NaN()};
@@ -1963,6 +2160,10 @@ struct EkfLocalizationComponent::Impl
   double max_gnss_course_dt_sec_{0.0};
   double max_gnss_course_dyaw_rad_{kPi};
   bool use_gnss_velocity_{false};
+  bool use_gnss_doppler_velocity_{false};
+  bool use_gnss_doppler_velocity_covariance_{true};
+  bool use_gnss_doppler_course_yaw_{false};
+  double min_gnss_doppler_course_speed_mps_{1.0};
   bool propagate_gnss_velocity_cross_state_{true};
   double var_gnss_velocity_xy_{0.0};
   double var_gnss_velocity_z_{0.0};
@@ -2002,6 +2203,8 @@ struct EkfLocalizationComponent::Impl
   bool use_odom_{false};
   bool publish_debug_topics_{false};
   std::string output_stamp_source_{"latest_input"};
+  std::string output_odometry_topic_;
+  bool publish_tf_{false};
 
   bool initial_pose_received_{false};
   bool has_received_input_{false};
@@ -2034,7 +2237,10 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr sub_gnss_navsatfix_;
+  rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr
+    sub_gnss_doppler_velocity_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr current_odometry_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_position_pub_;
@@ -2044,6 +2250,7 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;
   tf2_ros::TransformListener listener_;
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   geometry_msgs::msg::PoseStamped current_pose_odom_;
   Eigen::Matrix4d previous_odom_mat_{Eigen::Matrix4d::Identity()};
