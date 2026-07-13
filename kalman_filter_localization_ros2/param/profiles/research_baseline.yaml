@@ -1,0 +1,11 @@
+ekf_localization:
+  ros__parameters:
+    use_nonholonomic_constraint: false
+    use_zupt: false
+    use_zihr: false
+    compensate_gnss_delay: false
+    use_continuous_process_noise_density: false
+    use_second_order_state_transition: false
+    use_second_order_process_noise: false
+    gnss_position_robust_loss: "none"
+    gnss_navsatfix_use_position_covariance: false

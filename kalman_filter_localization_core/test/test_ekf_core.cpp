@@ -130,6 +130,41 @@ TEST(EKFEstimatorCore, ObservationUpdateVelocityKeepsOrientationWhenDecoupled)
   EXPECT_LT(angle_err, 1e-10);
 }
 
+TEST(EKFEstimatorCore, BodyVelocityConstraintReducesLateralAndVerticalVelocity)
+{
+  EKFEstimator ekf;
+  EKFEstimator::State state;
+  state.velocity = Eigen::Vector3d(5.0, 1.0, -0.5);
+  ekf.setState(state);
+
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(
+      ekf.observationUpdateBodyVelocityConstraintWithStatus(
+        Eigen::Vector2d::Zero(), Eigen::Vector2d(0.01, 0.01)),
+      EKFEstimator::ObservationUpdateStatus::kUpdated);
+  }
+
+  const Eigen::Vector3d body_velocity =
+    ekf.getOrientation().toRotationMatrix().transpose() * ekf.getVelocity();
+  EXPECT_NEAR(body_velocity.y(), 0.0, 1.0e-3);
+  EXPECT_NEAR(body_velocity.z(), 0.0, 1.0e-3);
+  EXPECT_GT(body_velocity.x(), 4.9);
+}
+
+TEST(EKFEstimatorCore, BodyVelocityConstraintValidatesInputs)
+{
+  EKFEstimator ekf;
+  EXPECT_EQ(
+    ekf.observationUpdateBodyVelocityConstraintWithStatus(
+      Eigen::Vector2d::Zero(), Eigen::Vector2d(0.0, 0.1)),
+    EKFEstimator::ObservationUpdateStatus::kInvalidVariance);
+  EXPECT_EQ(
+    ekf.observationUpdateBodyVelocityConstraintWithStatus(
+      Eigen::Vector2d(std::numeric_limits<double>::quiet_NaN(), 0.0),
+      Eigen::Vector2d(0.1, 0.1)),
+    EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
+}
+
 TEST(EKFEstimatorCore, PredictionUpdateSubtractsGyroBias)
 {
   EKFEstimator ekf;
@@ -429,4 +464,154 @@ TEST(EKFEstimatorCore, MaxPredictionDtSecConfig)
   EXPECT_EQ(
     ekf.predictionUpdateDt(1.0, gyro, acc),
     EKFEstimator::PredictionUpdateStatus::kUpdated);
+}
+
+TEST(EKFEstimatorCore, ContinuousNoiseDensityIsImuRateIndependent)
+{
+  EKFEstimator ekf_100_hz;
+  EKFEstimator ekf_200_hz;
+  ekf_100_hz.setUseContinuousProcessNoiseDensity(true);
+  ekf_200_hz.setUseContinuousProcessNoiseDensity(true);
+  ekf_100_hz.setVarImuAcc(0.4);
+  ekf_200_hz.setVarImuAcc(0.4);
+  ekf_100_hz.setVarImuGyro(0.2);
+  ekf_200_hz.setVarImuGyro(0.2);
+
+  const Eigen::Vector3d gyro = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d acceleration = Eigen::Vector3d::Zero();
+  for (int i = 0; i < 100; ++i) {
+    EXPECT_EQ(
+      ekf_100_hz.predictionUpdateDt(0.01, gyro, acceleration),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+  }
+  for (int i = 0; i < 200; ++i) {
+    EXPECT_EQ(
+      ekf_200_hz.predictionUpdateDt(0.005, gyro, acceleration),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+  }
+
+  const Eigen::MatrixXd covariance_100_hz = ekf_100_hz.getCovariance();
+  const Eigen::MatrixXd covariance_200_hz = ekf_200_hz.getCovariance();
+  const Eigen::Matrix3d velocity_covariance_100_hz = covariance_100_hz.block<3, 3>(3, 3);
+  const Eigen::Matrix3d velocity_covariance_200_hz = covariance_200_hz.block<3, 3>(3, 3);
+  const Eigen::Matrix3d attitude_covariance_100_hz = covariance_100_hz.block<3, 3>(6, 6);
+  const Eigen::Matrix3d attitude_covariance_200_hz = covariance_200_hz.block<3, 3>(6, 6);
+  EXPECT_TRUE(velocity_covariance_100_hz.isApprox(velocity_covariance_200_hz, 1.0e-9));
+  EXPECT_TRUE(attitude_covariance_100_hz.isApprox(attitude_covariance_200_hz, 1.0e-9));
+}
+
+TEST(EKFEstimatorCore, SecondOrderTransitionReducesImuRateSensitivity)
+{
+  EKFEstimator ekf_100_hz;
+  EKFEstimator ekf_200_hz;
+  ekf_100_hz.setUseContinuousProcessNoiseDensity(true);
+  ekf_200_hz.setUseContinuousProcessNoiseDensity(true);
+  ekf_100_hz.setUseSecondOrderStateTransition(true);
+  ekf_200_hz.setUseSecondOrderStateTransition(true);
+  const Eigen::Vector3d gyro(0.02, -0.01, 0.1);
+  const Eigen::Vector3d acceleration(0.3, -0.2, 9.80665);
+
+  for (int i = 0; i < 100; ++i) {
+    ASSERT_EQ(
+      ekf_100_hz.predictionUpdateDt(0.01, gyro, acceleration),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+  }
+  for (int i = 0; i < 200; ++i) {
+    ASSERT_EQ(
+      ekf_200_hz.predictionUpdateDt(0.005, gyro, acceleration),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+  }
+
+  const Eigen::MatrixXd covariance_100_hz = ekf_100_hz.getCovariance();
+  const Eigen::MatrixXd covariance_200_hz = ekf_200_hz.getCovariance();
+  const double relative_difference =
+    (covariance_100_hz - covariance_200_hz).norm() / covariance_200_hz.norm();
+  EXPECT_LT(relative_difference, 2.0e-3);
+}
+
+TEST(EKFEstimatorCore, RobustLossContinuouslyInflatesMeasurementVariance)
+{
+  using RobustLoss = EKFEstimator::RobustLoss;
+  EXPECT_DOUBLE_EQ(
+    EKFEstimator::computeRobustVarianceScale(2.0, RobustLoss::kHuber, 2.5, 100.0), 1.0);
+  EXPECT_DOUBLE_EQ(
+    EKFEstimator::computeRobustVarianceScale(5.0, RobustLoss::kHuber, 2.5, 100.0), 2.0);
+  EXPECT_DOUBLE_EQ(
+    EKFEstimator::computeRobustVarianceScale(5.0, RobustLoss::kCauchy, 2.5, 100.0), 5.0);
+  EXPECT_DOUBLE_EQ(
+    EKFEstimator::computeRobustVarianceScale(1000.0, RobustLoss::kCauchy, 2.5, 20.0), 20.0);
+  EXPECT_DOUBLE_EQ(
+    EKFEstimator::computeRobustVarianceScale(5.0, RobustLoss::kNone, 2.5, 100.0), 1.0);
+}
+
+TEST(EKFEstimatorCore, LeverArmPositionUpdateReducesAntennaResidual)
+{
+  EKFEstimator ekf;
+  EKFEstimator::State state;
+  state.orientation = Eigen::Quaterniond(
+    Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
+  ekf.setState(state);
+  const Eigen::Vector3d lever_arm(2.0, 0.0, 0.5);
+  const Eigen::Vector3d antenna_measurement = lever_arm;
+  const auto antenna_prediction = [&ekf, &lever_arm]() -> Eigen::Vector3d {
+      const Eigen::Vector3d position = ekf.getPosition();
+      const Eigen::Vector3d rotated_lever_arm = ekf.getOrientation() * lever_arm;
+      return position + rotated_lever_arm;
+    };
+  const double error_before = (antenna_measurement - antenna_prediction()).norm();
+
+  EXPECT_EQ(
+    ekf.observationUpdatePositionWithLeverArmWithStatus(
+      antenna_measurement, lever_arm, Eigen::Vector3d::Constant(0.01)),
+    EKFEstimator::ObservationUpdateStatus::kUpdated);
+
+  const double error_after = (antenna_measurement - antenna_prediction()).norm();
+  EXPECT_LT(error_after, error_before);
+}
+
+TEST(EKFEstimatorCore, StationaryGyroObservationEstimatesGyroBias)
+{
+  EKFEstimator ekf;
+  ASSERT_TRUE(ekf.setInitialGyroBiasCovariance(1.0));
+  const Eigen::Vector3d stationary_gyro(0.01, -0.02, 0.03);
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_EQ(
+      ekf.observationUpdateGyroBiasWithStatus(
+        stationary_gyro, Eigen::Vector3d::Constant(1.0e-5)),
+      EKFEstimator::ObservationUpdateStatus::kUpdated);
+  }
+  EXPECT_TRUE(ekf.getGyroBias().isApprox(stationary_gyro, 1.0e-4));
+  EXPECT_EQ(
+    ekf.observationUpdateGyroBiasWithStatus(
+      stationary_gyro, Eigen::Vector3d::Zero()),
+    EKFEstimator::ObservationUpdateStatus::kInvalidVariance);
+}
+
+TEST(EKFEstimatorCore, CoupledProcessNoiseIsImuRateIndependentForPosition)
+{
+  EKFEstimator ekf_100_hz;
+  EKFEstimator ekf_200_hz;
+  for (EKFEstimator * ekf : {&ekf_100_hz, &ekf_200_hz}) {
+    ekf->setUseContinuousProcessNoiseDensity(true);
+    ekf->setUseSecondOrderStateTransition(true);
+    ekf->setUseSecondOrderProcessNoise(true);
+    ekf->setVarImuAcc(0.4);
+    ekf->setVarImuGyro(0.2);
+  }
+  const Eigen::Vector3d zero = Eigen::Vector3d::Zero();
+  for (int i = 0; i < 100; ++i) {
+    ASSERT_EQ(
+      ekf_100_hz.predictionUpdateDt(0.01, zero, zero),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+  }
+  for (int i = 0; i < 200; ++i) {
+    ASSERT_EQ(
+      ekf_200_hz.predictionUpdateDt(0.005, zero, zero),
+      EKFEstimator::PredictionUpdateStatus::kUpdated);
+  }
+  const Eigen::Matrix3d position_covariance_100_hz =
+    ekf_100_hz.getCovariance().block<3, 3>(0, 0);
+  const Eigen::Matrix3d position_covariance_200_hz =
+    ekf_200_hz.getCovariance().block<3, 3>(0, 0);
+  EXPECT_TRUE(position_covariance_100_hz.isApprox(position_covariance_200_hz, 1.0e-9));
 }

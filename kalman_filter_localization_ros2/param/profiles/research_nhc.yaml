@@ -1,0 +1,9 @@
+ekf_localization:
+  ros__parameters:
+    use_nonholonomic_constraint: true
+    var_nhc_lateral_velocity: 0.05
+    var_nhc_vertical_velocity: 0.02
+    min_nhc_forward_speed_mps: 0.5
+    nhc_adaptive_yaw_rate_radps: 0.5
+    nhc_adaptive_lateral_accel_mps2: 1.5
+    max_nhc_variance_scale: 100.0

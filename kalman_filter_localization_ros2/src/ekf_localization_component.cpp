@@ -228,6 +228,17 @@ struct EkfLocalizationComponent::Impl
     node_.declare_parameter("gnss_navsatfix_use_first_fix_as_origin", true);
     node_.get_parameter(
       "gnss_navsatfix_use_first_fix_as_origin", gnss_navsatfix_use_first_fix_as_origin_);
+    node_.declare_parameter("gnss_navsatfix_use_position_covariance", false);
+    node_.get_parameter(
+      "gnss_navsatfix_use_position_covariance", gnss_navsatfix_use_position_covariance_);
+    node_.declare_parameter("gnss_navsatfix_min_variance_xy", 1.0e-4);
+    node_.get_parameter("gnss_navsatfix_min_variance_xy", gnss_navsatfix_min_variance_xy_);
+    node_.declare_parameter("gnss_navsatfix_min_variance_z", 1.0e-4);
+    node_.get_parameter("gnss_navsatfix_min_variance_z", gnss_navsatfix_min_variance_z_);
+    node_.declare_parameter("gnss_navsatfix_max_variance_xy", 100.0);
+    node_.get_parameter("gnss_navsatfix_max_variance_xy", gnss_navsatfix_max_variance_xy_);
+    node_.declare_parameter("gnss_navsatfix_max_variance_z", 100.0);
+    node_.get_parameter("gnss_navsatfix_max_variance_z", gnss_navsatfix_max_variance_z_);
     node_.declare_parameter(
       "gnss_navsatfix_origin_latitude", std::numeric_limits<double>::quiet_NaN());
     node_.get_parameter("gnss_navsatfix_origin_latitude", gnss_navsatfix_origin_latitude_);
@@ -237,6 +248,19 @@ struct EkfLocalizationComponent::Impl
     node_.declare_parameter(
       "gnss_navsatfix_origin_altitude", std::numeric_limits<double>::quiet_NaN());
     node_.get_parameter("gnss_navsatfix_origin_altitude", gnss_navsatfix_origin_altitude_);
+    node_.declare_parameter("gnss_lever_arm_x", 0.0);
+    node_.get_parameter("gnss_lever_arm_x", gnss_lever_arm_body_.x());
+    node_.declare_parameter("gnss_lever_arm_y", 0.0);
+    node_.get_parameter("gnss_lever_arm_y", gnss_lever_arm_body_.y());
+    node_.declare_parameter("gnss_lever_arm_z", 0.0);
+    node_.get_parameter("gnss_lever_arm_z", gnss_lever_arm_body_.z());
+    node_.declare_parameter("compensate_gnss_delay", false);
+    node_.get_parameter("compensate_gnss_delay", compensate_gnss_delay_);
+    node_.declare_parameter("gnss_time_offset_sec", 0.0);
+    node_.get_parameter("gnss_time_offset_sec", gnss_time_offset_sec_);
+    node_.declare_parameter("max_gnss_delay_compensation_sec", 0.5);
+    node_.get_parameter(
+      "max_gnss_delay_compensation_sec", max_gnss_delay_compensation_sec_);
 
     node_.declare_parameter("pub_period", 10);
     node_.get_parameter("pub_period", pub_period_);
@@ -244,6 +268,14 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("var_imu_w", var_imu_w_);
     node_.declare_parameter("var_imu_acc", 0.01);
     node_.get_parameter("var_imu_acc", var_imu_acc_);
+    node_.declare_parameter("use_continuous_process_noise_density", false);
+    node_.get_parameter(
+      "use_continuous_process_noise_density", use_continuous_process_noise_density_);
+    node_.declare_parameter("use_second_order_state_transition", false);
+    node_.get_parameter(
+      "use_second_order_state_transition", use_second_order_state_transition_);
+    node_.declare_parameter("use_second_order_process_noise", false);
+    node_.get_parameter("use_second_order_process_noise", use_second_order_process_noise_);
     node_.declare_parameter("var_imu_gyro_bias", 0.0);
     node_.get_parameter("var_imu_gyro_bias", var_imu_gyro_bias_);
     node_.declare_parameter("initial_imu_gyro_bias_covariance", 0.0);
@@ -266,6 +298,37 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("use_flat_ground", use_flat_ground_);
     node_.declare_parameter("var_flat_ground_rp", 0.03);
     node_.get_parameter("var_flat_ground_rp", var_flat_ground_rp_);
+    node_.declare_parameter("use_nonholonomic_constraint", false);
+    node_.get_parameter("use_nonholonomic_constraint", use_nonholonomic_constraint_);
+    node_.declare_parameter("var_nhc_lateral_velocity", 0.05);
+    node_.get_parameter("var_nhc_lateral_velocity", var_nhc_lateral_velocity_);
+    node_.declare_parameter("var_nhc_vertical_velocity", 0.02);
+    node_.get_parameter("var_nhc_vertical_velocity", var_nhc_vertical_velocity_);
+    node_.declare_parameter("min_nhc_forward_speed_mps", 0.5);
+    node_.get_parameter("min_nhc_forward_speed_mps", min_nhc_forward_speed_mps_);
+    node_.declare_parameter("nhc_adaptive_yaw_rate_radps", 0.5);
+    node_.get_parameter("nhc_adaptive_yaw_rate_radps", nhc_adaptive_yaw_rate_radps_);
+    node_.declare_parameter("nhc_adaptive_lateral_accel_mps2", 1.5);
+    node_.get_parameter(
+      "nhc_adaptive_lateral_accel_mps2", nhc_adaptive_lateral_accel_mps2_);
+    node_.declare_parameter("max_nhc_variance_scale", 100.0);
+    node_.get_parameter("max_nhc_variance_scale", max_nhc_variance_scale_);
+    node_.declare_parameter("use_zupt", false);
+    node_.get_parameter("use_zupt", use_zupt_);
+    node_.declare_parameter("zupt_max_angular_velocity_radps", 0.02);
+    node_.get_parameter("zupt_max_angular_velocity_radps", zupt_max_angular_velocity_radps_);
+    node_.declare_parameter("zupt_max_acceleration_error_mps2", 0.2);
+    node_.get_parameter("zupt_max_acceleration_error_mps2", zupt_max_acceleration_error_mps2_);
+    node_.declare_parameter("zupt_max_speed_mps", 0.3);
+    node_.get_parameter("zupt_max_speed_mps", zupt_max_speed_mps_);
+    node_.declare_parameter("zupt_min_stationary_duration_sec", 0.5);
+    node_.get_parameter("zupt_min_stationary_duration_sec", zupt_min_stationary_duration_sec_);
+    node_.declare_parameter("var_zupt_velocity", 0.01);
+    node_.get_parameter("var_zupt_velocity", var_zupt_velocity_);
+    node_.declare_parameter("use_zihr", false);
+    node_.get_parameter("use_zihr", use_zihr_);
+    node_.declare_parameter("var_zihr_gyro", 1.0e-5);
+    node_.get_parameter("var_zihr_gyro", var_zihr_gyro_);
     node_.declare_parameter("use_gnss_course_yaw", false);
     node_.get_parameter("use_gnss_course_yaw", use_gnss_course_yaw_);
     node_.declare_parameter("var_gnss_course_yaw", 0.05);
@@ -326,6 +389,14 @@ struct EkfLocalizationComponent::Impl
       "gnss_position_nis_adaptive_threshold", gnss_position_nis_adaptive_threshold_);
     node_.declare_parameter("max_gnss_position_variance_scale", 1.0);
     node_.get_parameter("max_gnss_position_variance_scale", max_gnss_position_variance_scale_);
+    node_.declare_parameter("gnss_position_robust_loss", "none");
+    node_.get_parameter("gnss_position_robust_loss", gnss_position_robust_loss_name_);
+    node_.declare_parameter("gnss_position_robust_tuning", 2.5);
+    node_.get_parameter("gnss_position_robust_tuning", gnss_position_robust_tuning_);
+    node_.declare_parameter("max_gnss_position_robust_variance_scale", 100.0);
+    node_.get_parameter(
+      "max_gnss_position_robust_variance_scale",
+      max_gnss_position_robust_variance_scale_);
     node_.declare_parameter("gnss_position_reacquisition_dt_sec", 0.0);
     node_.get_parameter("gnss_position_reacquisition_dt_sec", gnss_position_reacquisition_dt_sec_);
     node_.declare_parameter("gnss_position_reacquisition_variance_scale", 1.0);
@@ -415,6 +486,79 @@ struct EkfLocalizationComponent::Impl
         "invalid parameter gnss_input_type='%s'. fallback to default='pose'",
         gnss_input_type_.c_str());
       gnss_input_type_ = "pose";
+    }
+    if (gnss_position_robust_loss_name_ == "huber") {
+      gnss_position_robust_loss_ = core::EKFEstimator::RobustLoss::kHuber;
+    } else if (gnss_position_robust_loss_name_ == "cauchy") {
+      gnss_position_robust_loss_ = core::EKFEstimator::RobustLoss::kCauchy;
+    } else if (gnss_position_robust_loss_name_ != "none") {
+      RCLCPP_WARN(node_.get_logger(), "invalid GNSS robust loss; fallback to none");
+      gnss_position_robust_loss_name_ = "none";
+    }
+    if (!(gnss_position_robust_tuning_ > 0.0) ||
+      !(max_gnss_position_robust_variance_scale_ >= 1.0))
+    {
+      RCLCPP_WARN(node_.get_logger(), "invalid GNSS robust loss parameters; disabling robust loss");
+      gnss_position_robust_loss_ = core::EKFEstimator::RobustLoss::kNone;
+    }
+    if (!gnss_lever_arm_body_.allFinite()) {
+      RCLCPP_WARN(node_.get_logger(), "invalid GNSS lever arm; fallback to zero");
+      gnss_lever_arm_body_.setZero();
+    }
+    if (gnss_navsatfix_use_position_covariance_ &&
+      (!(gnss_navsatfix_min_variance_xy_ > 0.0) ||
+      !(gnss_navsatfix_min_variance_z_ > 0.0) ||
+      !(gnss_navsatfix_max_variance_xy_ >= gnss_navsatfix_min_variance_xy_) ||
+      !(gnss_navsatfix_max_variance_z_ >= gnss_navsatfix_min_variance_z_)))
+    {
+      RCLCPP_WARN(node_.get_logger(), "invalid NavSatFix covariance limits; using fixed variance");
+      gnss_navsatfix_use_position_covariance_ = false;
+    }
+    if (compensate_gnss_delay_ &&
+      (!std::isfinite(gnss_time_offset_sec_) ||
+      !(max_gnss_delay_compensation_sec_ > 0.0) ||
+      !std::isfinite(max_gnss_delay_compensation_sec_)))
+    {
+      RCLCPP_WARN(node_.get_logger(), "invalid GNSS delay parameters; disabling compensation");
+      compensate_gnss_delay_ = false;
+    }
+    if (use_nonholonomic_constraint_) {
+      if (!(var_nhc_lateral_velocity_ > 0.0) || !std::isfinite(var_nhc_lateral_velocity_)) {
+        RCLCPP_WARN(node_.get_logger(), "invalid var_nhc_lateral_velocity; fallback to 0.05");
+        var_nhc_lateral_velocity_ = 0.05;
+      }
+      if (!(var_nhc_vertical_velocity_ > 0.0) || !std::isfinite(var_nhc_vertical_velocity_)) {
+        RCLCPP_WARN(node_.get_logger(), "invalid var_nhc_vertical_velocity; fallback to 0.02");
+        var_nhc_vertical_velocity_ = 0.02;
+      }
+      if (!(min_nhc_forward_speed_mps_ >= 0.0) || !std::isfinite(min_nhc_forward_speed_mps_)) {
+        RCLCPP_WARN(node_.get_logger(), "invalid min_nhc_forward_speed_mps; fallback to 0.5");
+        min_nhc_forward_speed_mps_ = 0.5;
+      }
+      if (!(max_nhc_variance_scale_ >= 1.0) || !std::isfinite(max_nhc_variance_scale_)) {
+        RCLCPP_WARN(node_.get_logger(), "invalid max_nhc_variance_scale; fallback to 100.0");
+        max_nhc_variance_scale_ = 100.0;
+      }
+    }
+    if (use_zupt_ || use_zihr_) {
+      if (!(zupt_max_angular_velocity_radps_ >= 0.0) ||
+        !(zupt_max_acceleration_error_mps2_ >= 0.0) ||
+        !(zupt_max_speed_mps_ >= 0.0) ||
+        !(zupt_min_stationary_duration_sec_ >= 0.0))
+      {
+        RCLCPP_WARN(node_.get_logger(),
+            "invalid stationary detector parameters; disabling updates");
+        use_zupt_ = false;
+        use_zihr_ = false;
+      }
+    }
+    if (use_zupt_ && (!(var_zupt_velocity_ > 0.0) || !std::isfinite(var_zupt_velocity_))) {
+      RCLCPP_WARN(node_.get_logger(), "invalid var_zupt_velocity; disabling ZUPT");
+      use_zupt_ = false;
+    }
+    if (use_zihr_ && (!(var_zihr_gyro_ > 0.0) || !std::isfinite(var_zihr_gyro_))) {
+      RCLCPP_WARN(node_.get_logger(), "invalid var_zihr_gyro; disabling ZIHR");
+      use_zihr_ = false;
     }
     if (gnss_input_type_ == "navsatfix" && !gnss_navsatfix_use_first_fix_as_origin_) {
       if (isValidLatitudeLongitude(
@@ -548,7 +692,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter max_gnss_position_innovation_m=%f. disabling GNSS position innovation gate",
+        "invalid parameter max_gnss_position_innovation_m=%f. disabling GNSS position "
+        "innovation gate",
         max_gnss_position_innovation_m_);
       max_gnss_position_innovation_m_ = 0.0;
     }
@@ -558,7 +703,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter max_gnss_position_innovation_clip_m=%f. disabling GNSS position innovation clipping",
+        "invalid parameter max_gnss_position_innovation_clip_m=%f. disabling GNSS position "
+        "innovation clipping",
         max_gnss_position_innovation_clip_m_);
       max_gnss_position_innovation_clip_m_ = 0.0;
     }
@@ -568,7 +714,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_nis_adaptive_threshold=%f. disabling adaptive GNSS position covariance",
+        "invalid parameter gnss_position_nis_adaptive_threshold=%f. disabling adaptive GNSS "
+        "position covariance",
         gnss_position_nis_adaptive_threshold_);
       gnss_position_nis_adaptive_threshold_ = 0.0;
     }
@@ -588,7 +735,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_dt_sec=%f. disabling GNSS reacquisition scaling",
+        "invalid parameter gnss_position_reacquisition_dt_sec=%f. disabling GNSS "
+        "reacquisition scaling",
         gnss_position_reacquisition_dt_sec_);
       gnss_position_reacquisition_dt_sec_ = 0.0;
     }
@@ -615,7 +763,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_covariance_cap_xy=%f. disabling covariance cap",
+        "invalid parameter gnss_position_reacquisition_covariance_cap_xy=%f. disabling "
+        "covariance cap",
         gnss_position_reacquisition_covariance_cap_xy_);
       gnss_position_reacquisition_covariance_cap_xy_ = 0.0;
     }
@@ -625,7 +774,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_covariance_cap_z=%f. disabling covariance cap",
+        "invalid parameter gnss_position_reacquisition_covariance_cap_z=%f. disabling "
+        "covariance cap",
         gnss_position_reacquisition_covariance_cap_z_);
       gnss_position_reacquisition_covariance_cap_z_ = 0.0;
     }
@@ -635,7 +785,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_velocity_covariance_cap_xy=%f. disabling covariance cap",
+        "invalid parameter gnss_position_reacquisition_velocity_covariance_cap_xy=%f. "
+        "disabling covariance cap",
         gnss_position_reacquisition_velocity_covariance_cap_xy_);
       gnss_position_reacquisition_velocity_covariance_cap_xy_ = 0.0;
     }
@@ -645,7 +796,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_velocity_covariance_cap_z=%f. disabling covariance cap",
+        "invalid parameter gnss_position_reacquisition_velocity_covariance_cap_z=%f. "
+        "disabling covariance cap",
         gnss_position_reacquisition_velocity_covariance_cap_z_);
       gnss_position_reacquisition_velocity_covariance_cap_z_ = 0.0;
     }
@@ -655,7 +807,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_attitude_covariance_cap_rp=%f. disabling covariance cap",
+        "invalid parameter gnss_position_reacquisition_attitude_covariance_cap_rp=%f. "
+        "disabling covariance cap",
         gnss_position_reacquisition_attitude_covariance_cap_rp_);
       gnss_position_reacquisition_attitude_covariance_cap_rp_ = 0.0;
     }
@@ -665,7 +818,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_reacquisition_attitude_covariance_cap_yaw=%f. disabling covariance cap",
+        "invalid parameter gnss_position_reacquisition_attitude_covariance_cap_yaw=%f. "
+        "disabling covariance cap",
         gnss_position_reacquisition_attitude_covariance_cap_yaw_);
       gnss_position_reacquisition_attitude_covariance_cap_yaw_ = 0.0;
     }
@@ -675,7 +829,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_position_innovation_adaptive_threshold_m=%f. disabling innovation-norm GNSS position covariance",
+        "invalid parameter gnss_position_innovation_adaptive_threshold_m=%f. disabling "
+        "innovation-norm GNSS position covariance",
         gnss_position_innovation_adaptive_threshold_m_);
       gnss_position_innovation_adaptive_threshold_m_ = 0.0;
     }
@@ -702,7 +857,8 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(
         node_.get_logger(),
-        "invalid parameter gnss_course_yaw_nis_adaptive_threshold=%f. disabling adaptive GNSS course-yaw covariance",
+        "invalid parameter gnss_course_yaw_nis_adaptive_threshold=%f. disabling adaptive "
+        "GNSS course-yaw covariance",
         gnss_course_yaw_nis_adaptive_threshold_);
       gnss_course_yaw_nis_adaptive_threshold_ = 0.0;
     }
@@ -765,6 +921,9 @@ struct EkfLocalizationComponent::Impl
 
     ekf_.setVarImuGyro(var_imu_w_);
     ekf_.setVarImuAcc(var_imu_acc_);
+    ekf_.setUseContinuousProcessNoiseDensity(use_continuous_process_noise_density_);
+    ekf_.setUseSecondOrderStateTransition(use_second_order_state_transition_);
+    ekf_.setUseSecondOrderProcessNoise(use_second_order_process_noise_);
     ekf_.setVarImuGyroBias(var_imu_gyro_bias_);
     if (!ekf_.setInitialGyroBiasCovariance(initial_imu_gyro_bias_covariance_)) {
       RCLCPP_WARN(
@@ -860,6 +1019,7 @@ struct EkfLocalizationComponent::Impl
         // Reset GNSS-derived baselines on re-initialization.
         has_course_base_gnss_ = false;
         has_previous_velocity_gnss_ = false;
+        has_stationary_start_time_ = false;
       };
 
     auto imu_callback =
@@ -963,7 +1123,7 @@ struct EkfLocalizationComponent::Impl
     auto gnss_pose_callback =
       [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
       {
-        handleGnssPose(*msg);
+        handleGnssPose(*msg, var_gnss_);
       };
 
     auto gnss_navsatfix_callback =
@@ -974,7 +1134,7 @@ struct EkfLocalizationComponent::Impl
         }
         geometry_msgs::msg::PoseStamped pose_msg;
         if (convertNavSatFixToPose(*msg, pose_msg)) {
-          handleGnssPose(pose_msg);
+          handleGnssPose(pose_msg, getNavSatFixVariance(*msg));
         }
       };
 
@@ -1154,6 +1314,110 @@ struct EkfLocalizationComponent::Impl
         publishUpdateDeltaDebug(imu_msg.header.stamp, 2, 1, state_before, captureState());
       }
     }
+    if (use_nonholonomic_constraint_) {
+      updateNonholonomicConstraint(imu_msg);
+    }
+    if (use_zupt_ || use_zihr_) {
+      updateZeroVelocity(imu_msg, current_time_imu);
+    }
+  }
+
+  void updateZeroVelocity(const sensor_msgs::msg::Imu & imu_msg, const double time_sec)
+  {
+    const Eigen::Vector3d angular_velocity(
+      imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z);
+    const Eigen::Vector3d linear_acceleration(
+      imu_msg.linear_acceleration.x,
+      imu_msg.linear_acceleration.y,
+      imu_msg.linear_acceleration.z);
+    const bool stationary = core::isStationaryImu(
+      angular_velocity,
+      linear_acceleration,
+      ekf_.getVelocity().norm(),
+      gravity_mps2_,
+      zupt_max_angular_velocity_radps_,
+      zupt_max_acceleration_error_mps2_,
+      zupt_max_speed_mps_);
+    if (!stationary) {
+      has_stationary_start_time_ = false;
+      return;
+    }
+    if (!has_stationary_start_time_) {
+      stationary_start_time_ = time_sec;
+      has_stationary_start_time_ = true;
+      return;
+    }
+    if (time_sec - stationary_start_time_ < zupt_min_stationary_duration_sec_) {
+      return;
+    }
+
+    if (use_zupt_) {
+      const StateSnapshot state_before = captureState();
+      const Eigen::Vector3d variance = Eigen::Vector3d::Constant(var_zupt_velocity_);
+      const auto status = ekf_.observationUpdateVelocityWithStatus(
+        Eigen::Vector3d::Zero(), variance, true);
+      int status_code = 1;
+      if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+        status_code = -1;
+      } else if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+        status_code = -2;
+      }
+      publishUpdateDeltaDebug(
+        imu_msg.header.stamp, 6, status_code, state_before, captureState());
+    }
+    if (use_zihr_) {
+      const StateSnapshot state_before = captureState();
+      const Eigen::Vector3d variance = Eigen::Vector3d::Constant(var_zihr_gyro_);
+      const auto status = ekf_.observationUpdateGyroBiasWithStatus(
+        angular_velocity, variance);
+      int status_code = 1;
+      if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+        status_code = -1;
+      } else if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+        status_code = -2;
+      }
+      publishUpdateDeltaDebug(
+        imu_msg.header.stamp, 7, status_code, state_before, captureState());
+    }
+  }
+
+  void updateNonholonomicConstraint(const sensor_msgs::msg::Imu & imu_msg)
+  {
+    const Eigen::Quaterniond orientation = ekf_.getOrientation().normalized();
+    const Eigen::Vector3d body_velocity =
+      orientation.toRotationMatrix().transpose() * ekf_.getVelocity();
+    if (!body_velocity.allFinite() ||
+      std::fabs(body_velocity.x()) < min_nhc_forward_speed_mps_)
+    {
+      return;
+    }
+
+    double variance_scale = 1.0;
+    if (nhc_adaptive_yaw_rate_radps_ > 0.0) {
+      const double ratio =
+        std::fabs(imu_msg.angular_velocity.z) / nhc_adaptive_yaw_rate_radps_;
+      variance_scale = std::max(variance_scale, ratio * ratio);
+    }
+    if (nhc_adaptive_lateral_accel_mps2_ > 0.0) {
+      const double ratio =
+        std::fabs(imu_msg.linear_acceleration.y) / nhc_adaptive_lateral_accel_mps2_;
+      variance_scale = std::max(variance_scale, ratio * ratio);
+    }
+    variance_scale = std::min(variance_scale, max_nhc_variance_scale_);
+    const Eigen::Vector2d variance(
+      var_nhc_lateral_velocity_ * variance_scale,
+      var_nhc_vertical_velocity_ * variance_scale);
+    const StateSnapshot state_before = captureState();
+    const auto status = ekf_.observationUpdateBodyVelocityConstraintWithStatus(
+      Eigen::Vector2d::Zero(), variance);
+    int status_code = 1;
+    if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
+      status_code = -1;
+    } else if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidVariance) {
+      status_code = -2;
+    }
+    publishUpdateDeltaDebug(
+      imu_msg.header.stamp, 5, status_code, state_before, captureState());
   }
 
   void setGnssNavSatFixOrigin(double latitude_deg, double longitude_deg, double altitude_m)
@@ -1212,15 +1476,72 @@ struct EkfLocalizationComponent::Impl
     return true;
   }
 
-  void handleGnssPose(const geometry_msgs::msg::PoseStamped & pose_msg)
+  Eigen::Vector3d getNavSatFixVariance(const sensor_msgs::msg::NavSatFix & fix_msg) const
+  {
+    if (!gnss_navsatfix_use_position_covariance_ ||
+      fix_msg.position_covariance_type == sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN)
+    {
+      return var_gnss_;
+    }
+    const Eigen::Vector3d candidate(
+      fix_msg.position_covariance[0],
+      fix_msg.position_covariance[4],
+      fix_msg.position_covariance[8]);
+    const Eigen::Vector3d minimum(
+      gnss_navsatfix_min_variance_xy_,
+      gnss_navsatfix_min_variance_xy_,
+      gnss_navsatfix_min_variance_z_);
+    const Eigen::Vector3d maximum(
+      gnss_navsatfix_max_variance_xy_,
+      gnss_navsatfix_max_variance_xy_,
+      gnss_navsatfix_max_variance_z_);
+    return core::sanitizeMeasurementVariance(candidate, var_gnss_, minimum, maximum);
+  }
+
+  void handleGnssPose(
+    const geometry_msgs::msg::PoseStamped & pose_msg,
+    const Eigen::Vector3d & position_variance)
   {
     if (initial_pose_received_ && use_gnss_) {
-      measurementUpdate(pose_msg, var_gnss_, true);
+      geometry_msgs::msg::PoseStamped body_pose_msg = pose_msg;
+      const Eigen::Vector3d antenna_position(
+        pose_msg.pose.position.x, pose_msg.pose.position.y, pose_msg.pose.position.z);
+      const Eigen::Vector3d body_position = core::removeLeverArmFromPosition(
+        antenna_position, ekf_.getOrientation(), gnss_lever_arm_body_);
+      body_pose_msg.pose.position.x = body_position.x();
+      body_pose_msg.pose.position.y = body_position.y();
+      body_pose_msg.pose.position.z = body_position.z();
+      geometry_msgs::msg::PoseStamped measurement_pose_msg = pose_msg;
+      if (compensate_gnss_delay_ && has_latest_imu_stamp_) {
+        const double imu_time =
+          latest_imu_stamp_.seconds();
+        const double measurement_time =
+          body_pose_msg.header.stamp.sec + body_pose_msg.header.stamp.nanosec * 1.0e-9 +
+          gnss_time_offset_sec_;
+        const double delay = imu_time - measurement_time;
+        if (delay > max_gnss_delay_compensation_sec_) {
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000,
+            "skip GNSS measurement with excessive delay: %f > %f [sec]",
+            delay, max_gnss_delay_compensation_sec_);
+          return;
+        }
+        if (delay > 0.0) {
+          const Eigen::Vector3d compensated_position =
+            core::extrapolatePositionConstantVelocity(
+            antenna_position, ekf_.getVelocity(), delay);
+          measurement_pose_msg.pose.position.x = compensated_position.x();
+          measurement_pose_msg.pose.position.y = compensated_position.y();
+          measurement_pose_msg.pose.position.z = compensated_position.z();
+        }
+      }
+      measurementUpdate(
+        measurement_pose_msg, position_variance, true, gnss_lever_arm_body_);
       if (use_gnss_velocity_) {
-        updateVelocityFromGnss(pose_msg);
+        updateVelocityFromGnss(body_pose_msg);
       }
       if (use_gnss_course_yaw_) {
-        updateYawFromGnssCourse(pose_msg);
+        updateYawFromGnssCourse(body_pose_msg);
       }
     }
   }
@@ -1419,11 +1740,11 @@ struct EkfLocalizationComponent::Impl
       variance.y(),
       variance.z(),
       covariance.rows() > 0 && covariance.cols() > 0 ? covariance(0, 0) :
-        std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::quiet_NaN(),
       covariance.rows() > 1 && covariance.cols() > 1 ? covariance(1, 1) :
-        std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::quiet_NaN(),
       covariance.rows() > 2 && covariance.cols() > 2 ? covariance(2, 2) :
-        std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::quiet_NaN(),
       raw_nis,
       variance_scale};
     debug_gnss_position_pub_->publish(msg);
@@ -1463,8 +1784,8 @@ struct EkfLocalizationComponent::Impl
       speed,
       variance,
       covariance.rows() > kErrorStateYawIndex && covariance.cols() > kErrorStateYawIndex ?
-        covariance(kErrorStateYawIndex, kErrorStateYawIndex) :
-        std::numeric_limits<double>::quiet_NaN(),
+      covariance(kErrorStateYawIndex, kErrorStateYawIndex) :
+      std::numeric_limits<double>::quiet_NaN(),
       raw_nis,
       variance_scale};
     debug_gnss_course_yaw_pub_->publish(msg);
@@ -1557,7 +1878,8 @@ struct EkfLocalizationComponent::Impl
   void measurementUpdate(
     const geometry_msgs::msg::PoseStamped & pose_msg,
     const Eigen::Vector3d & variance,
-    const bool publish_gnss_debug = false)
+    const bool publish_gnss_debug = false,
+    const Eigen::Vector3d & lever_arm_body = Eigen::Vector3d::Zero())
   {
     has_received_input_ = true;
     current_stamp_ = pose_msg.header.stamp;
@@ -1584,7 +1906,9 @@ struct EkfLocalizationComponent::Impl
       }
     }
     const Eigen::Vector3d position_before_update = ekf_.getPosition();
-    const Eigen::Vector3d innovation = y - position_before_update;
+    const Eigen::Vector3d predicted_measurement =
+      position_before_update + ekf_.getOrientation().normalized() * lever_arm_body;
+    const Eigen::Vector3d innovation = y - predicted_measurement;
     const Eigen::MatrixXd covariance = ekf_.getCovariance();
     const double raw_nis = computePositionNis(innovation, variance, covariance);
     const StateSnapshot state_before = captureState();
@@ -1595,7 +1919,7 @@ struct EkfLocalizationComponent::Impl
 
     if (is_reacquisition_update && gnss_position_reacquisition_reset_position_) {
       core::EKFEstimator::State state = ekf_.getState();
-      state.position = y;
+      state.position = y - state.orientation.normalized() * lever_arm_body;
       if (gnss_position_reacquisition_reset_velocity_) {
         state.velocity = Eigen::Vector3d::Zero();
       }
@@ -1605,7 +1929,8 @@ struct EkfLocalizationComponent::Impl
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
           pose_msg, innovation, raw_nis, 1, variance, covariance, raw_nis, 1.0);
-        publishUpdateDeltaDebug(pose_msg.header.stamp, 4, 1, state_before, captureState(), reset_extra);
+        publishUpdateDeltaDebug(pose_msg.header.stamp, 4, 1, state_before, captureState(),
+            reset_extra);
       }
       return;
     }
@@ -1650,8 +1975,15 @@ struct EkfLocalizationComponent::Impl
       innovation.norm(),
       gnss_position_innovation_adaptive_threshold_m_,
       max_gnss_position_innovation_variance_scale_);
+    const double robust_variance_scale = core::EKFEstimator::computeRobustVarianceScale(
+      std::sqrt(std::max(0.0, raw_nis)),
+      gnss_position_robust_loss_,
+      gnss_position_robust_tuning_,
+      max_gnss_position_robust_variance_scale_);
     const double variance_scale =
-      std::max({nis_variance_scale, innovation_variance_scale, reacquisition_variance_scale});
+      std::max({
+        nis_variance_scale, innovation_variance_scale,
+        reacquisition_variance_scale, robust_variance_scale});
     Eigen::Vector3d update_innovation = innovation;
     if (
       max_gnss_position_innovation_clip_m_ > 0.0 &&
@@ -1660,13 +1992,16 @@ struct EkfLocalizationComponent::Impl
     {
       update_innovation *= max_gnss_position_innovation_clip_m_ / innovation_norm;
     }
-    const Eigen::Vector3d y_update = position_before_update + update_innovation;
+    const Eigen::Vector3d y_update = predicted_measurement + update_innovation;
     const Eigen::Vector3d used_variance = variance * variance_scale;
     const double used_nis = computePositionNis(update_innovation, used_variance, covariance);
     const UpdateDeltaExtra update_extra = computePositionUpdateExtra(
       covariance, innovation, update_innovation, used_variance, raw_nis, used_nis, variance_scale);
 
-    const auto status = ekf_.observationUpdateWithStatus(y_update, used_variance);
+    const auto status = lever_arm_body.squaredNorm() > 0.0 ?
+      ekf_.observationUpdatePositionWithLeverArmWithStatus(
+      y_update, lever_arm_body, used_variance) :
+      ekf_.observationUpdateWithStatus(y_update, used_variance);
     if (status == core::EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement) {
       if (publish_gnss_debug) {
         publishGnssPositionDebug(
@@ -1694,7 +2029,8 @@ struct EkfLocalizationComponent::Impl
     if (publish_gnss_debug) {
       publishGnssPositionDebug(
         pose_msg, innovation, used_nis, 1, used_variance, covariance, raw_nis, variance_scale);
-      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 1, state_before, captureState(), update_extra);
+      publishUpdateDeltaDebug(pose_msg.header.stamp, 1, 1, state_before, captureState(),
+          update_extra);
     }
   }
 
@@ -2133,15 +2469,27 @@ struct EkfLocalizationComponent::Impl
   std::string gnss_navsatfix_topic_;
   std::string gnss_doppler_velocity_topic_;
   bool gnss_navsatfix_use_first_fix_as_origin_{true};
+  bool gnss_navsatfix_use_position_covariance_{false};
+  double gnss_navsatfix_min_variance_xy_{1.0e-4};
+  double gnss_navsatfix_min_variance_z_{1.0e-4};
+  double gnss_navsatfix_max_variance_xy_{100.0};
+  double gnss_navsatfix_max_variance_z_{100.0};
   double gnss_navsatfix_origin_latitude_{std::numeric_limits<double>::quiet_NaN()};
   double gnss_navsatfix_origin_longitude_{std::numeric_limits<double>::quiet_NaN()};
   double gnss_navsatfix_origin_altitude_{std::numeric_limits<double>::quiet_NaN()};
   Eigen::Vector3d gnss_navsatfix_origin_ecef_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d gnss_lever_arm_body_{Eigen::Vector3d::Zero()};
+  bool compensate_gnss_delay_{false};
+  double gnss_time_offset_sec_{0.0};
+  double max_gnss_delay_compensation_sec_{0.5};
   bool has_gnss_navsatfix_origin_{false};
   int pub_period_{0};
 
   double var_imu_w_{0.0};
   double var_imu_acc_{0.0};
+  bool use_continuous_process_noise_density_{false};
+  bool use_second_order_state_transition_{false};
+  bool use_second_order_process_noise_{false};
   double var_imu_gyro_bias_{0.0};
   double initial_imu_gyro_bias_covariance_{0.0};
   double tau_gyro_bias_sec_{0.0};
@@ -2153,6 +2501,23 @@ struct EkfLocalizationComponent::Impl
   double var_imu_orientation_rpy_{0.0};
   bool use_flat_ground_{false};
   double var_flat_ground_rp_{0.0};
+  bool use_nonholonomic_constraint_{false};
+  double var_nhc_lateral_velocity_{0.05};
+  double var_nhc_vertical_velocity_{0.02};
+  double min_nhc_forward_speed_mps_{0.5};
+  double nhc_adaptive_yaw_rate_radps_{0.5};
+  double nhc_adaptive_lateral_accel_mps2_{1.5};
+  double max_nhc_variance_scale_{100.0};
+  bool use_zupt_{false};
+  double zupt_max_angular_velocity_radps_{0.02};
+  double zupt_max_acceleration_error_mps2_{0.2};
+  double zupt_max_speed_mps_{0.3};
+  double zupt_min_stationary_duration_sec_{0.5};
+  double var_zupt_velocity_{0.01};
+  bool use_zihr_{false};
+  double var_zihr_gyro_{1.0e-5};
+  bool has_stationary_start_time_{false};
+  double stationary_start_time_{0.0};
   bool use_gnss_course_yaw_{false};
   double var_gnss_course_yaw_{0.0};
   double min_gnss_course_distance_m_{0.0};
@@ -2180,6 +2545,11 @@ struct EkfLocalizationComponent::Impl
   double max_gnss_course_yaw_nis_{0.0};
   double gnss_position_nis_adaptive_threshold_{0.0};
   double max_gnss_position_variance_scale_{1.0};
+  std::string gnss_position_robust_loss_name_{"none"};
+  core::EKFEstimator::RobustLoss gnss_position_robust_loss_{
+    core::EKFEstimator::RobustLoss::kNone};
+  double gnss_position_robust_tuning_{2.5};
+  double max_gnss_position_robust_variance_scale_{100.0};
   double gnss_position_reacquisition_dt_sec_{0.0};
   double gnss_position_reacquisition_variance_scale_{1.0};
   int gnss_position_reacquisition_update_count_{1};
