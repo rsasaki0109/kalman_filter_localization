@@ -1,29 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="430" viewBox="0 0 960 430" role="img" aria-labelledby="title desc">
-  <title id="title">UrbanNav Odaiba ablation 3D RMSE</title>
-  <desc id="desc">Robust profile achieved 172.84 metres versus baseline 197.48 metres. NHC and full profiles were worse.</desc>
+  <title id="title">UrbanNav Odaiba GNSS outage ablation 3D RMSE</title>
+  <desc id="desc">During the 81.8 second GNSS outage, wheel speed with simultaneous non-holonomic constraints reduced 3D RMSE from 657.47 metres to 6.34 metres.</desc>
   <rect width="960" height="430" rx="22" fill="#f8fafc"/>
-  <text x="48" y="54" font-family="sans-serif" font-size="26" font-weight="700" fill="#0f172a">UrbanNav Odaiba — 3D RMSE</text>
-  <text x="48" y="82" font-family="sans-serif" font-size="15" fill="#64748b">u-blox RTK input · GNSS outage up to 81.8 s · lower is better</text>
+  <text x="48" y="54" font-family="sans-serif" font-size="26" font-weight="700" fill="#0f172a">UrbanNav Odaiba — GNSS outage 3D RMSE</text>
+  <text x="48" y="82" font-family="sans-serif" font-size="15" fill="#64748b">81.8 s outage · logarithmic scale · lower is better</text>
   <g font-family="sans-serif" font-size="17">
     <text x="48" y="139" fill="#334155">baseline</text>
-    <rect x="165" y="116" width="296" height="32" rx="7" fill="#64748b"/>
-    <text x="475" y="139" fill="#334155" font-weight="700">197.48 m</text>
+    <rect x="190" y="116" width="650" height="32" rx="7" fill="#64748b"/>
+    <text x="852" y="139" fill="#334155" font-weight="700">657.47 m</text>
 
-    <text x="48" y="207" fill="#334155">NHC</text>
-    <rect x="165" y="184" width="723" height="32" rx="7" fill="#f59e0b"/>
-    <text x="802" y="207" fill="#fff" font-weight="700">482.06 m</text>
+    <text x="48" y="207" fill="#334155">wheel auto</text>
+    <rect x="190" y="184" width="605" height="32" rx="7" fill="#f59e0b"/>
+    <text x="807" y="207" fill="#334155" font-weight="700">420.70 m</text>
 
-    <text x="48" y="275" fill="#0f766e" font-weight="700">robust</text>
-    <rect x="165" y="252" width="259" height="32" rx="7" fill="#0d9488"/>
-    <text x="438" y="275" fill="#0f766e" font-weight="700">172.84 m  (−12.5%)</text>
+    <text x="48" y="275" fill="#334155">wheel + NHC auto</text>
+    <rect x="190" y="252" width="210" height="32" rx="7" fill="#38bdf8"/>
+    <text x="412" y="275" fill="#0369a1" font-weight="700">8.11 m</text>
 
-    <text x="48" y="343" fill="#334155">full</text>
-    <rect x="165" y="320" width="394" height="32" rx="7" fill="#8b5cf6"/>
-    <text x="573" y="343" fill="#334155" font-weight="700">262.59 m</text>
+    <text x="48" y="343" fill="#0f766e" font-weight="700">wheel + NHC fixed</text>
+    <rect x="190" y="320" width="185" height="32" rx="7" fill="#0d9488"/>
+    <text x="387" y="343" fill="#0f766e" font-weight="700">6.34 m  (−99.0%)</text>
   </g>
-  <line x1="165" y1="382" x2="888" y2="382" stroke="#cbd5e1" stroke-width="2"/>
+  <line x1="190" y1="382" x2="840" y2="382" stroke="#cbd5e1" stroke-width="2"/>
   <g font-family="sans-serif" font-size="13" fill="#64748b" text-anchor="middle">
-    <text x="165" y="405">0</text><text x="316" y="405">100</text><text x="466" y="405">200</text>
-    <text x="617" y="405">300</text><text x="767" y="405">400</text><text x="888" y="405">480 m</text>
+    <text x="190" y="405">1 m</text><text x="421" y="405">10 m</text>
+    <text x="651" y="405">100 m</text><text x="840" y="405">657 m</text>
   </g>
 </svg>
