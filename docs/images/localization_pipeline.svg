@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="310" viewBox="0 0 960 310" role="img" aria-labelledby="title desc">
+  <title id="title">Kalman Filter Localization pipeline</title>
+  <desc id="desc">GNSS, IMU and odometry are fused by an error-state EKF to produce pose, odometry and TF.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#60a5fa"/>
+    </marker>
+  </defs>
+  <rect width="960" height="310" rx="22" fill="url(#bg)"/>
+  <text x="40" y="48" fill="#f8fafc" font-family="sans-serif" font-size="24" font-weight="700">Kalman Filter Localization</text>
+  <g font-family="sans-serif" font-size="17" text-anchor="middle">
+    <g fill="#0f172a">
+      <rect x="40" y="78" width="190" height="52" rx="12" fill="#bfdbfe"/><text x="135" y="111">GNSS position</text>
+      <rect x="40" y="148" width="190" height="52" rx="12" fill="#c7d2fe"/><text x="135" y="181">IMU gyro + accel</text>
+      <rect x="40" y="218" width="190" height="52" rx="12" fill="#ddd6fe"/><text x="135" y="251">Odometry / Doppler</text>
+    </g>
+    <g stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow)">
+      <path d="M230 104 L360 135"/><path d="M230 174 L360 174"/><path d="M230 244 L360 213"/>
+      <path d="M600 174 L730 174"/>
+    </g>
+    <rect x="360" y="104" width="240" height="140" rx="18" fill="#2563eb"/>
+    <text x="480" y="151" fill="#fff" font-size="22" font-weight="700">Error-State EKF</text>
+    <text x="480" y="184" fill="#dbeafe" font-size="15">position · velocity · attitude</text>
+    <text x="480" y="210" fill="#dbeafe" font-size="15">gyro bias · accel bias</text>
+    <rect x="730" y="112" width="190" height="124" rx="18" fill="#0f766e"/>
+    <text x="825" y="153" fill="#fff" font-size="20" font-weight="700">Output</text>
+    <text x="825" y="184" fill="#ccfbf1" font-size="15">Pose · Odometry</text>
+    <text x="825" y="210" fill="#ccfbf1" font-size="15">TF · Covariance</text>
+  </g>
+</svg>
