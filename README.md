@@ -1,18 +1,19 @@
 # Kalman Filter Localization
 
-ROS 2向けのGNSS/IMU/odometry Error-State EKFです。姿勢・速度・位置とIMU biasを推定します。
+A GNSS/IMU/odometry error-state EKF for ROS 2. It estimates position, velocity,
+attitude, and IMU biases.
 
 ![Localization pipeline](docs/images/localization_pipeline.svg)
 
 ## Features
 
 - GNSS pose / `NavSatFix` / Doppler velocity
-- IMU gyro・加速度bias推定
-- GNSS外れ値のNIS gate、Huber/Cauchy loss
-- GNSS antenna lever arm・短時間delay補償
-- NHC、ZUPT、ZIHR
-- 連続時間process noiseと2次離散化
-- CSV評価、UrbanNav Tokyo ablation実行
+- Gyroscope and accelerometer bias estimation
+- GNSS NIS gating and Huber/Cauchy robust losses
+- GNSS antenna lever arm and short-delay compensation
+- NHC, ZUPT, and ZIHR
+- Continuous-time process noise and second-order discretization
+- CSV evaluation and UrbanNav Tokyo ablation tools
 
 ## Build and run
 
@@ -23,7 +24,7 @@ source install/setup.bash
 ros2 launch kalman_filter_localization ekf.launch.py
 ```
 
-主なtopic:
+Main topics:
 
 | Direction | Topic | Type |
 |---|---|---|
@@ -33,12 +34,13 @@ ros2 launch kalman_filter_localization ekf.launch.py
 | output | `/ekf_localization/current_pose` | `geometry_msgs/PoseStamped` |
 | output | `/ekf_localization/current_odometry` | `nav_msgs/Odometry` |
 
-設定は [`ekf.yaml`](kalman_filter_localization_ros2/param/ekf.yaml)、データセット別設定は
-[`param/profiles`](kalman_filter_localization_ros2/param/profiles) にあります。
+See [`ekf.yaml`](kalman_filter_localization_ros2/param/ekf.yaml) for the default
+parameters and [`param/profiles`](kalman_filter_localization_ros2/param/profiles) for
+dataset-specific configurations.
 
 ## GNSS input
 
-`PoseStamped`が標準です。`NavSatFix`を直接使う場合:
+`PoseStamped` is the default input. To use `NavSatFix` directly:
 
 ```yaml
 gnss_input_type: "navsatfix"
@@ -47,8 +49,8 @@ gnss_navsatfix_use_first_fix_as_origin: true
 gnss_navsatfix_use_position_covariance: true
 ```
 
-antenna offsetは`gnss_lever_arm_{x,y,z}`、既知の短いdelayは
-`compensate_gnss_delay`と`gnss_time_offset_sec`で設定します。
+Configure the antenna offset with `gnss_lever_arm_{x,y,z}`. Known short delays use
+`compensate_gnss_delay` and `gnss_time_offset_sec`.
 
 ## Evaluation
 
@@ -60,16 +62,18 @@ ros2 run kalman_filter_localization evaluate_localization \
   --output-csv errors.csv
 ```
 
-CSV列は`stamp,x,y,z,yaw`です。RMSE、最大3D誤差、match率を出力し、CI用の閾値も指定できます。
+CSV files use `stamp,x,y,z,yaw`. The evaluator reports RMSE, maximum 3D error, and
+match ratio, with optional acceptance thresholds for CI.
 
 ## UrbanNav Tokyo ablation
 
 ![UrbanNav Odaiba ablation](docs/images/urbannav_odaiba_ablation.svg)
 
-Odaibaのu-blox RTK解には最長81.8秒のGNSS欠測があります。初期パラメータでの結果では、
-robust profileがbaselineに対して3D RMSEを12.5%改善しました。NHC/fullは要調整です。
+The Odaiba u-blox RTK solution contains GNSS outages of up to 81.8 seconds. With the
+initial parameters, the robust profile reduced 3D RMSE by 12.5% versus baseline. The
+NHC and full profiles require further tuning.
 
-公式CSVとRTKLIB解をROS 2 bagへ変換:
+Convert the official CSV files and RTKLIB solution into a ROS 2 bag:
 
 ```bash
 ros2 run kalman_filter_localization prepare_urbannav_tokyo \
@@ -80,7 +84,7 @@ ros2 run kalman_filter_localization prepare_urbannav_tokyo \
   --output-reference-csv odaiba_reference.csv
 ```
 
-4構成を実行してCSV/Markdown比較表を生成:
+Run all four profiles and generate CSV/Markdown comparisons:
 
 ```bash
 share="$(ros2 pkg prefix kalman_filter_localization)/share/kalman_filter_localization"
@@ -92,8 +96,8 @@ ros2 run kalman_filter_localization run_urbannav_ablation \
   --profiles-dir "$share/param/profiles"
 ```
 
-出力には各構成の合成YAML、軌跡CSV、bag、ログ、`comparison.csv`、`comparison.md`、
-`manifest.json`が含まれます。
+The output contains merged YAML, trajectory CSV, bag, and logs for each profile, plus
+`comparison.csv`, `comparison.md`, and `manifest.json`.
 
 ## Test
 
