@@ -36,6 +36,7 @@
 #include <Eigen/Geometry>
 
 #include <cmath>
+#include <limits>
 
 #include <kalman_filter_localization/core/odometry.hpp>
 
@@ -80,4 +81,53 @@ TEST(OdometryCore, ComposePoseWithRelativeOdomAppliesGlobalRotation)
   EXPECT_NEAR(composed(0, 3), 10.0, 1e-9);
   EXPECT_NEAR(composed(1, 3), 4.0, 1e-9);
   EXPECT_NEAR(composed(2, 3), 0.0, 1e-9);
+}
+
+TEST(OdometryCore, RemoveLeverArmUsesBodyOrientation)
+{
+  const double pi = std::acos(-1.0);
+  const Eigen::Quaterniond world_from_body(
+    Eigen::AngleAxisd(pi / 2.0, Eigen::Vector3d::UnitZ()));
+  const Eigen::Vector3d body_position(10.0, 20.0, 2.0);
+  const Eigen::Vector3d lever_arm_body(2.0, 0.0, 1.0);
+  const Eigen::Vector3d antenna_position =
+    body_position + world_from_body * lever_arm_body;
+
+  const Eigen::Vector3d result =
+    kalman_filter_localization::core::removeLeverArmFromPosition(
+    antenna_position, world_from_body, lever_arm_body);
+
+  EXPECT_TRUE(result.isApprox(body_position, 1.0e-12));
+}
+
+TEST(OdometryCore, StationaryImuRequiresAllSignalsToBeQuiet)
+{
+  using kalman_filter_localization::core::isStationaryImu;
+  const Eigen::Vector3d quiet_gyro(0.001, -0.002, 0.003);
+  const Eigen::Vector3d gravity(0.01, -0.02, 9.80);
+  EXPECT_TRUE(isStationaryImu(quiet_gyro, gravity, 0.05, 9.80665, 0.02, 0.2, 0.3));
+  EXPECT_FALSE(isStationaryImu(
+    Eigen::Vector3d(0.0, 0.0, 0.1), gravity, 0.05, 9.80665, 0.02, 0.2, 0.3));
+  EXPECT_FALSE(isStationaryImu(
+    quiet_gyro, Eigen::Vector3d(3.0, 0.0, 9.8), 0.05, 9.80665, 0.02, 0.2, 0.3));
+  EXPECT_FALSE(isStationaryImu(quiet_gyro, gravity, 2.0, 9.80665, 0.02, 0.2, 0.3));
+}
+
+TEST(OdometryCore, ExtrapolatePositionUsesConstantVelocity)
+{
+  const Eigen::Vector3d result =
+    kalman_filter_localization::core::extrapolatePositionConstantVelocity(
+    Eigen::Vector3d(1.0, 2.0, 3.0), Eigen::Vector3d(4.0, -2.0, 0.5), 0.25);
+  EXPECT_TRUE(result.isApprox(Eigen::Vector3d(2.0, 1.5, 3.125), 1.0e-12));
+}
+
+TEST(OdometryCore, SanitizeMeasurementVarianceFallsBackAndClamps)
+{
+  const Eigen::Vector3d result =
+    kalman_filter_localization::core::sanitizeMeasurementVariance(
+    Eigen::Vector3d(1.0e-6, std::numeric_limits<double>::quiet_NaN(), 100.0),
+    Eigen::Vector3d(0.1, 0.2, 0.3),
+    Eigen::Vector3d(0.01, 0.01, 0.02),
+    Eigen::Vector3d(10.0, 10.0, 5.0));
+  EXPECT_TRUE(result.isApprox(Eigen::Vector3d(0.01, 0.2, 5.0), 1.0e-12));
 }

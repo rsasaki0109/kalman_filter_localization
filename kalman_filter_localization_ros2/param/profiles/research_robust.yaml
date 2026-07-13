@@ -1,0 +1,10 @@
+ekf_localization:
+  ros__parameters:
+    gnss_position_robust_loss: "huber"
+    gnss_position_robust_tuning: 2.5
+    max_gnss_position_robust_variance_scale: 100.0
+    gnss_navsatfix_use_position_covariance: true
+    gnss_navsatfix_min_variance_xy: 0.0001
+    gnss_navsatfix_min_variance_z: 0.0001
+    gnss_navsatfix_max_variance_xy: 100.0
+    gnss_navsatfix_max_variance_z: 100.0

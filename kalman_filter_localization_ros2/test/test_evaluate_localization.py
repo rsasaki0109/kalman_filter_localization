@@ -30,17 +30,40 @@
 import contextlib
 import importlib.util
 import io
+import json
 import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
+
+import yaml
 
 
 SCRIPT = Path(__file__).parents[1] / 'scripts' / 'evaluate_localization.py'
+COMPARISON_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'compare_localization_results.py')
+RUNNER_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'run_urbannav_ablation.py')
+PREPARE_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'prepare_urbannav_tokyo.py')
 DATA = Path(__file__).parent / 'data'
 SPEC = importlib.util.spec_from_file_location('evaluate_localization', SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+COMPARISON_SPEC = importlib.util.spec_from_file_location(
+    'compare_localization_results', COMPARISON_SCRIPT)
+COMPARISON_MODULE = importlib.util.module_from_spec(COMPARISON_SPEC)
+with mock.patch.dict('sys.modules', {'evaluate_localization': MODULE}):
+    COMPARISON_SPEC.loader.exec_module(COMPARISON_MODULE)
+RUNNER_SPEC = importlib.util.spec_from_file_location(
+    'run_urbannav_ablation', RUNNER_SCRIPT)
+RUNNER_MODULE = importlib.util.module_from_spec(RUNNER_SPEC)
+RUNNER_SPEC.loader.exec_module(RUNNER_MODULE)
+PREPARE_SPEC = importlib.util.spec_from_file_location(
+    'prepare_urbannav_tokyo', PREPARE_SCRIPT)
+PREPARE_MODULE = importlib.util.module_from_spec(PREPARE_SPEC)
+PREPARE_SPEC.loader.exec_module(PREPARE_MODULE)
 
 
 class EvaluateLocalizationTest(unittest.TestCase):
@@ -124,6 +147,81 @@ class EvaluateLocalizationTest(unittest.TestCase):
                     ])
             self.assertEqual(result, 1)
             self.assertIn('"passed": false', output.read_text(encoding='utf-8'))
+
+    def test_ablation_comparison_uses_first_estimate_as_baseline(self):
+        estimates = [
+            ('baseline', DATA / 'estimate.csv'),
+            ('candidate', DATA / 'estimate.csv'),
+        ]
+        rows = COMPARISON_MODULE.compare(
+            DATA / 'reference.csv', estimates, 0.2, 0.0)
+        self.assertEqual([row['name'] for row in rows], ['baseline', 'candidate'])
+        self.assertAlmostEqual(rows[0]['delta_rmse_3d_m'], 0.0)
+        self.assertAlmostEqual(rows[1]['delta_rmse_3d_m'], 0.0)
+
+    def test_ablation_comparison_writes_csv_and_markdown(self):
+        rows = COMPARISON_MODULE.compare(
+            DATA / 'reference.csv', [('baseline', DATA / 'estimate.csv')],
+            0.2, 0.0)
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / 'comparison.csv'
+            markdown_path = Path(directory) / 'comparison.md'
+            COMPARISON_MODULE.write_csv(csv_path, rows)
+            COMPARISON_MODULE.write_markdown(markdown_path, rows)
+            self.assertIn('delta_rmse_3d_m', csv_path.read_text(encoding='utf-8'))
+            markdown = markdown_path.read_text(encoding='utf-8')
+            self.assertIn('| Profile |', markdown)
+            self.assertIn('| baseline |', markdown)
+
+    def test_urbannav_runner_deep_merges_research_parameters(self):
+        base = {'ekf_localization': {'ros__parameters': {
+            'use_gnss': True, 'use_zupt': False}}}
+        override = {'ekf_localization': {'ros__parameters': {
+            'use_zupt': True}}}
+        merged = RUNNER_MODULE.deep_merge(base, override)
+        parameters = merged['ekf_localization']['ros__parameters']
+        self.assertTrue(parameters['use_gnss'])
+        self.assertTrue(parameters['use_zupt'])
+        self.assertFalse(base['ekf_localization']['ros__parameters']['use_zupt'])
+
+    def test_urbannav_runner_dry_run_writes_configs_and_manifest(self):
+        profiles = Path(__file__).parents[1] / 'param' / 'profiles'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_bag = root / 'input_bag'
+            input_bag.mkdir()
+            output = root / 'results'
+            result = RUNNER_MODULE.main([
+                '--input-bag', str(input_bag),
+                '--reference-csv', str(DATA / 'reference.csv'),
+                '--output-dir', str(output),
+                '--base-profile', str(profiles / 'urbannav_tokyo_tuned.yaml'),
+                '--profiles-dir', str(profiles),
+                '--dry-run',
+            ])
+            self.assertEqual(result, 0)
+            manifest = json.loads(
+                (output / 'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(
+                [run['name'] for run in manifest['runs']],
+                ['baseline', 'nhc', 'robust', 'full'])
+            full = yaml.safe_load(
+                (output / 'configs' / 'full.yaml').read_text(encoding='utf-8'))
+            parameters = full['ekf_localization']['ros__parameters']
+            self.assertTrue(parameters['use_gnss'])
+            self.assertTrue(parameters['use_zupt'])
+
+    def test_urbannav_geodetic_origin_maps_to_zero_enu(self):
+        origin = (35.62931853, 139.78712595, 44.6995)
+        ecef = PREPARE_MODULE.geodetic_to_ecef(*origin)
+        enu = PREPARE_MODULE.ecef_to_enu(
+            ecef, ecef, origin[0], origin[1])
+        self.assertEqual(enu, (0.0, 0.0, 0.0))
+
+    def test_urbannav_gps_stamp_is_continuous_across_weeks(self):
+        before = PREPARE_MODULE.gps_stamp(2032, 604799.9)
+        after = PREPARE_MODULE.gps_stamp(2033, 0.1)
+        self.assertAlmostEqual(after - before, 0.2, places=5)
 
 
 if __name__ == '__main__':

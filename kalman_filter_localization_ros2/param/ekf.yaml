@@ -6,6 +6,17 @@ ekf_localization:
       gnss_input_type: "pose"  # "pose" or "navsatfix"
       gnss_navsatfix_topic: "/gnss/fix"
       gnss_navsatfix_use_first_fix_as_origin: true
+      gnss_navsatfix_use_position_covariance: false
+      gnss_navsatfix_min_variance_xy: 1.0e-4
+      gnss_navsatfix_min_variance_z: 1.0e-4
+      gnss_navsatfix_max_variance_xy: 100.0
+      gnss_navsatfix_max_variance_z: 100.0
+      gnss_lever_arm_x: 0.0
+      gnss_lever_arm_y: 0.0
+      gnss_lever_arm_z: 0.0
+      compensate_gnss_delay: false
+      gnss_time_offset_sec: 0.0
+      max_gnss_delay_compensation_sec: 0.5
       # gnss_navsatfix_origin_latitude: 35.0
       # gnss_navsatfix_origin_longitude: 139.0
       # gnss_navsatfix_origin_altitude: 0.0
@@ -16,6 +27,9 @@ ekf_localization:
       publish_tf: false
       var_imu_w: 0.01
       var_imu_acc: 0.01
+      use_continuous_process_noise_density: false
+      use_second_order_state_transition: false
+      use_second_order_process_noise: false
       var_imu_gyro_bias: 0.0
       initial_imu_gyro_bias_covariance: 0.0
       tau_gyro_bias_sec: 3600.0
@@ -27,6 +41,21 @@ ekf_localization:
       var_imu_orientation_rpy: 0.01
       use_flat_ground: false
       var_flat_ground_rp: 0.03
+      use_nonholonomic_constraint: false
+      var_nhc_lateral_velocity: 0.05
+      var_nhc_vertical_velocity: 0.02
+      min_nhc_forward_speed_mps: 0.5
+      nhc_adaptive_yaw_rate_radps: 0.5
+      nhc_adaptive_lateral_accel_mps2: 1.5
+      max_nhc_variance_scale: 100.0
+      use_zupt: false
+      zupt_max_angular_velocity_radps: 0.02
+      zupt_max_acceleration_error_mps2: 0.2
+      zupt_max_speed_mps: 0.3
+      zupt_min_stationary_duration_sec: 0.5
+      var_zupt_velocity: 0.01
+      use_zihr: false
+      var_zihr_gyro: 1.0e-5
       use_gnss_course_yaw: false
       var_gnss_course_yaw: 0.05
       min_gnss_course_distance_m: 1.0
@@ -52,6 +81,9 @@ ekf_localization:
       max_gnss_position_nis: 0.0  # 0 disables hard NIS gate
       gnss_position_nis_adaptive_threshold: 0.0  # 0 disables adaptive R
       max_gnss_position_variance_scale: 1.0
+      gnss_position_robust_loss: "none"  # "none", "huber", or "cauchy"
+      gnss_position_robust_tuning: 2.5
+      max_gnss_position_robust_variance_scale: 100.0
       gnss_position_reacquisition_dt_sec: 0.0  # 0 disables long-gap reacquisition R scaling
       gnss_position_reacquisition_variance_scale: 1.0
       gnss_position_reacquisition_update_count: 1

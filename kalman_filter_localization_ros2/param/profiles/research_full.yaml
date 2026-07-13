@@ -1,0 +1,17 @@
+ekf_localization:
+  ros__parameters:
+    use_nonholonomic_constraint: true
+    var_nhc_lateral_velocity: 0.05
+    var_nhc_vertical_velocity: 0.02
+    use_zupt: true
+    use_zihr: true
+    var_zupt_velocity: 0.01
+    var_zihr_gyro: 0.00001
+    initial_imu_gyro_bias_covariance: 0.01
+    use_continuous_process_noise_density: true
+    use_second_order_state_transition: true
+    use_second_order_process_noise: true
+    gnss_position_robust_loss: "huber"
+    gnss_position_robust_tuning: 2.5
+    max_gnss_position_robust_variance_scale: 100.0
+    gnss_navsatfix_use_position_covariance: true

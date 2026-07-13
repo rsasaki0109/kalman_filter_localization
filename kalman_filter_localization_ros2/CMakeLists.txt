@@ -91,6 +91,24 @@ install(PROGRAMS
   RENAME evaluate_localization
 )
 
+install(PROGRAMS
+  scripts/compare_localization_results.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME compare_localization_results
+)
+
+install(PROGRAMS
+  scripts/run_urbannav_ablation.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME run_urbannav_ablation
+)
+
+install(PROGRAMS
+  scripts/prepare_urbannav_tokyo.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME prepare_urbannav_tokyo
+)
+
 install(TARGETS
   ekf_localization_node
   DESTINATION lib/kalman_filter_localization
