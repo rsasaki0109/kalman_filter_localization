@@ -35,6 +35,7 @@ import csv
 from dataclasses import dataclass
 import json
 import math
+import statistics
 import sys
 
 
@@ -76,6 +77,15 @@ def read_csv(path):
                 message = '{}:{} contains a non-numeric value'.format(path, row_number)
                 raise ValueError(message) from error
     return sorted(samples, key=lambda sample: sample.stamp)
+
+
+def select_time_range(samples, start_stamp=None, end_stamp=None):
+    """Select an inclusive timestamp range without changing sample order."""
+    if start_stamp is not None and end_stamp is not None and start_stamp > end_stamp:
+        raise ValueError('--start-stamp must not exceed --end-stamp')
+    return [sample for sample in samples
+            if (start_stamp is None or sample.stamp >= start_stamp)
+            and (end_stamp is None or sample.stamp <= end_stamp)]
 
 
 def read_bag(path, topic):
@@ -131,7 +141,10 @@ def interpolate(samples, stamps, stamp, max_gap):
         yaw)
 
 
-def evaluate(estimates, references, max_gap, time_offset=0.0):
+def evaluate(
+        estimates, references, max_gap, time_offset=0.0,
+        align_translation=False, start_stamp=None, end_stamp=None):
+    estimates = select_time_range(estimates, start_stamp, end_stamp)
     if not estimates or not references:
         raise ValueError('estimate and reference trajectories must not be empty')
     reference_stamps = [sample.stamp for sample in references]
@@ -157,6 +170,19 @@ def evaluate(estimates, references, max_gap, time_offset=0.0):
     if not errors:
         raise ValueError('no overlapping samples; check timestamps and --max-reference-gap')
 
+    alignment = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+    if align_translation:
+        alignment = {
+            axis: statistics.median(row['d' + axis] for row in errors)
+            for axis in ('x', 'y', 'z')}
+        for row in errors:
+            row['dx'] -= alignment['x']
+            row['dy'] -= alignment['y']
+            row['dz'] -= alignment['z']
+            row['horizontal'] = math.hypot(row['dx'], row['dy'])
+            row['error_3d'] = math.sqrt(
+                row['dx'] ** 2 + row['dy'] ** 2 + row['dz'] ** 2)
+
     def rmse(key):
         values = [row[key] for row in errors if math.isfinite(row[key])]
         return math.sqrt(sum(value * value for value in values) / len(values)) if values else None
@@ -164,6 +190,7 @@ def evaluate(estimates, references, max_gap, time_offset=0.0):
     return {'matched_samples': len(errors), 'estimate_samples': len(estimates),
             'match_ratio': len(errors) / len(estimates),
             'duration_sec': errors[-1]['stamp'] - errors[0]['stamp'],
+            'translation_alignment_m': alignment,
             'rmse_3d_m': rmse('error_3d'), 'rmse_horizontal_m': rmse('horizontal'),
             'rmse_vertical_m': rmse('dz'), 'yaw_rmse_deg': rmse('yaw_deg'),
             'max_error_3d_m': max(row['error_3d'] for row in errors)}, errors
@@ -205,6 +232,11 @@ def parse_args(argv=None):
     parser.add_argument('--max-reference-gap', type=float, default=0.2)
     parser.add_argument('--time-offset', type=float, default=0.0,
                         help='seconds added to estimate timestamps before matching')
+    parser.add_argument(
+        '--align-translation', action='store_true',
+        help='remove median XYZ offset before calculating position errors')
+    parser.add_argument('--start-stamp', type=float, help='inclusive estimate start timestamp')
+    parser.add_argument('--end-stamp', type=float, help='inclusive estimate end timestamp')
     parser.add_argument('--output-json')
     parser.add_argument('--output-csv', help='write per-sample errors')
     parser.add_argument('--max-rmse-3d', type=float)
@@ -228,7 +260,9 @@ def main(argv=None):
             if not args.reference_csv:
                 raise ValueError('--reference-csv is required with --estimate-csv')
             estimates, references = read_csv(args.estimate_csv), read_csv(args.reference_csv)
-        summary, errors = evaluate(estimates, references, args.max_reference_gap, args.time_offset)
+        summary, errors = evaluate(
+            estimates, references, args.max_reference_gap, args.time_offset,
+            args.align_translation, args.start_stamp, args.end_stamp)
         thresholds = {
             'rmse_3d_m': args.max_rmse_3d,
             'rmse_horizontal_m': args.max_rmse_horizontal,

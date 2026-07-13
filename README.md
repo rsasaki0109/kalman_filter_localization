@@ -11,7 +11,7 @@ attitude, and IMU biases.
 - Gyroscope and accelerometer bias estimation
 - GNSS NIS gating and Huber/Cauchy robust losses
 - GNSS antenna lever arm and short-delay compensation
-- NHC, ZUPT, and ZIHR
+- Wheel speed, NHC, ZUPT, and ZIHR
 - Continuous-time process noise and second-order discretization
 - CSV evaluation and UrbanNav Tokyo ablation tools
 
@@ -31,6 +31,7 @@ Main topics:
 | input | `/ekf_localization/initial_pose` | `geometry_msgs/PoseStamped` |
 | input | `/gnss_pose` | `geometry_msgs/PoseStamped` |
 | input | `/sensing/imu/imu_data` | `sensor_msgs/Imu` |
+| input | `/wheel_speed` (optional) | `geometry_msgs/TwistWithCovarianceStamped` |
 | output | `/ekf_localization/current_pose` | `geometry_msgs/PoseStamped` |
 | output | `/ekf_localization/current_odometry` | `nav_msgs/Odometry` |
 
@@ -69,9 +70,8 @@ match ratio, with optional acceptance thresholds for CI.
 
 ![UrbanNav Odaiba ablation](docs/images/urbannav_odaiba_ablation.svg)
 
-The Odaiba u-blox RTK solution contains GNSS outages of up to 81.8 seconds. With the
-initial parameters, the robust profile reduced 3D RMSE by 12.5% versus baseline. The
-NHC and full profiles require further tuning.
+The Odaiba u-blox RTK solution contains GNSS outages of up to 81.8 seconds. The
+wheel-speed + NHC profile reduced outage 3D RMSE from 657.47 m to 6.34 m.
 
 Convert the official CSV files and RTKLIB solution into a ROS 2 bag:
 
@@ -84,7 +84,7 @@ ros2 run kalman_filter_localization prepare_urbannav_tokyo \
   --output-reference-csv odaiba_reference.csv
 ```
 
-Run all four profiles and generate CSV/Markdown comparisons:
+Run selected profiles and generate CSV/Markdown comparisons:
 
 ```bash
 share="$(ros2 pkg prefix kalman_filter_localization)/share/kalman_filter_localization"
@@ -93,11 +93,14 @@ ros2 run kalman_filter_localization run_urbannav_ablation \
   --reference-csv odaiba_reference.csv \
   --output-dir results/urbannav_tokyo \
   --base-profile "$share/param/profiles/urbannav_tokyo_tuned.yaml" \
-  --profiles-dir "$share/param/profiles"
+  --profiles-dir "$share/param/profiles" \
+  --profile baseline --profile wheel_nhc --profile wheel_nhc_fixed
 ```
 
 The output contains merged YAML, trajectory CSV, bag, and logs for each profile, plus
 `comparison.csv`, `comparison.md`, and `manifest.json`.
+See [research evaluation](docs/research_evaluation.md) for the open-sky and outage
+protocols, exact intervals, and results.
 
 ## Test
 
@@ -111,3 +114,4 @@ colcon test-result --verbose
 - Joan Sola, *Quaternion kinematics for the error-state Kalman filter*, 2017
 - K. Feng, *A New Quaternion-Based Kalman Filter*, 2017
 - [UrbanNav Dataset](https://github.com/IPNL-POLYU/UrbanNavDataset)
+- [MapIV Eagleye](https://github.com/MapIV/eagleye)

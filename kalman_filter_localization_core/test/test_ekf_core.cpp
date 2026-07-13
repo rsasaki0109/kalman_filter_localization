@@ -165,6 +165,66 @@ TEST(EKFEstimatorCore, BodyVelocityConstraintValidatesInputs)
     EKFEstimator::ObservationUpdateStatus::kInvalidMeasurement);
 }
 
+TEST(EKFEstimatorCore, BodyVelocityObservationConvergesToWheelSpeed)
+{
+  EKFEstimator estimator;
+  EKFEstimator::State state;
+  state.position = Eigen::Vector3d::Zero();
+  state.velocity = Eigen::Vector3d(2.0, 1.0, -0.5);
+  state.orientation = Eigen::Quaterniond::Identity();
+  estimator.setState(state);
+
+  const Eigen::Vector3d measured(8.0, 0.0, 0.0);
+  const Eigen::Vector3d variance(0.01, 0.01, 0.01);
+  for (int index = 0; index < 50; ++index) {
+    EXPECT_EQ(
+      estimator.observationUpdateBodyVelocityWithStatus(measured, variance),
+      EKFEstimator::ObservationUpdateStatus::kUpdated);
+  }
+  const Eigen::Vector3d body_velocity =
+    estimator.getOrientation().toRotationMatrix().transpose() * estimator.getVelocity();
+  EXPECT_NEAR(body_velocity.x(), 8.0, 0.05);
+  EXPECT_NEAR(body_velocity.y(), 0.0, 0.05);
+  EXPECT_NEAR(body_velocity.z(), 0.0, 0.05);
+}
+
+TEST(EKFEstimatorCore, BodyVelocityObservationUsesBodyFrame)
+{
+  EKFEstimator estimator;
+  EKFEstimator::State state;
+  state.position = Eigen::Vector3d::Zero();
+  state.velocity = Eigen::Vector3d(0.0, 4.0, 0.0);
+  state.orientation = Eigen::Quaterniond(
+    Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitZ()));
+  estimator.setState(state);
+
+  EXPECT_EQ(
+    estimator.observationUpdateBodyVelocityWithStatus(
+      Eigen::Vector3d(4.0, 0.0, 0.0), Eigen::Vector3d::Constant(0.01)),
+    EKFEstimator::ObservationUpdateStatus::kUpdated);
+  EXPECT_NEAR(estimator.getVelocity().x(), 0.0, 1.0e-9);
+  EXPECT_NEAR(estimator.getVelocity().y(), 4.0, 1.0e-9);
+}
+
+TEST(EKFEstimatorCore, BodyForwardSpeedDoesNotConstrainUnmeasuredAxes)
+{
+  EKFEstimator ekf;
+  EKFEstimator::State state = ekf.getState();
+  state.velocity = Eigen::Vector3d(5.0, 2.0, -1.0);
+  ekf.setState(state);
+  for (int index = 0; index < 20; ++index) {
+    EXPECT_EQ(
+      ekf.observationUpdateBodyForwardSpeedWithStatus(3.0, 1.0e-3),
+      EKFEstimator::ObservationUpdateStatus::kUpdated);
+  }
+  EXPECT_NEAR(ekf.getVelocity().x(), 3.0, 1.0e-3);
+  EXPECT_NEAR(ekf.getVelocity().y(), 2.0, 1.0e-9);
+  EXPECT_NEAR(ekf.getVelocity().z(), -1.0, 1.0e-9);
+  EXPECT_EQ(
+    ekf.observationUpdateBodyForwardSpeedWithStatus(3.0, 0.0),
+    EKFEstimator::ObservationUpdateStatus::kInvalidVariance);
+}
+
 TEST(EKFEstimatorCore, PredictionUpdateSubtractsGyroBias)
 {
   EKFEstimator ekf;

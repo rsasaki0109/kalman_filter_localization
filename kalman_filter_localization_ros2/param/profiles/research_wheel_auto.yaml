@@ -1,0 +1,20 @@
+ekf_localization:
+  ros__parameters:
+    use_wheel_speed: true
+    wheel_speed_topic: "/wheel_speed"
+    wheel_speed_scale_factor: 1.0
+    estimate_wheel_speed_scale_factor: true
+    wheel_scale_window_size: 100
+    wheel_scale_min_samples: 20
+    wheel_scale_min_speed_mps: 2.78
+    wheel_scale_max_yaw_rate_radps: 0.0873
+    wheel_scale_min_factor: 0.8
+    wheel_scale_max_factor: 1.2
+    wheel_scale_max_sample_age_sec: 0.2
+    var_wheel_speed: 0.04
+    var_wheel_lateral_velocity: 0.05
+    var_wheel_vertical_velocity: 0.02
+    max_wheel_speed_innovation_mps: 10.0
+    gnss_position_robust_loss: "huber"
+    gnss_position_robust_tuning: 2.5
+    max_gnss_position_robust_variance_scale: 100.0

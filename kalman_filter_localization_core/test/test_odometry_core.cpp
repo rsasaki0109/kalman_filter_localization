@@ -131,3 +131,12 @@ TEST(OdometryCore, SanitizeMeasurementVarianceFallsBackAndClamps)
     Eigen::Vector3d(10.0, 10.0, 5.0));
   EXPECT_TRUE(result.isApprox(Eigen::Vector3d(0.01, 0.2, 5.0), 1.0e-12));
 }
+
+TEST(OdometryCore, WheelSpeedScaleFactorUsesFilteredMedian)
+{
+  using kalman_filter_localization::core::medianWheelSpeedScaleFactor;
+  const std::vector<double> samples{1.02, 50.0, 0.98, 1.00, 0.99};
+  EXPECT_NEAR(medianWheelSpeedScaleFactor(samples, 1.0, 0.8, 1.2), 0.995, 1.0e-12);
+  EXPECT_DOUBLE_EQ(medianWheelSpeedScaleFactor({50.0}, 1.0, 0.8, 1.2), 1.0);
+  EXPECT_DOUBLE_EQ(medianWheelSpeedScaleFactor({}, 0.97, 0.8, 1.2), 0.97);
+}

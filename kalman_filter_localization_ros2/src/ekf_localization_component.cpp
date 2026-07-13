@@ -313,6 +313,49 @@ struct EkfLocalizationComponent::Impl
       "nhc_adaptive_lateral_accel_mps2", nhc_adaptive_lateral_accel_mps2_);
     node_.declare_parameter("max_nhc_variance_scale", 100.0);
     node_.get_parameter("max_nhc_variance_scale", max_nhc_variance_scale_);
+    node_.declare_parameter("use_wheel_speed", false);
+    node_.get_parameter("use_wheel_speed", use_wheel_speed_);
+    node_.declare_parameter("wheel_speed_topic", "/wheel_speed");
+    node_.get_parameter("wheel_speed_topic", wheel_speed_topic_);
+    node_.declare_parameter("wheel_speed_scale_factor", 1.0);
+    node_.get_parameter("wheel_speed_scale_factor", wheel_speed_scale_factor_);
+    node_.declare_parameter("wheel_speed_use_nonholonomic_constraints", false);
+    node_.get_parameter(
+      "wheel_speed_use_nonholonomic_constraints",
+      wheel_speed_use_nonholonomic_constraints_);
+    node_.declare_parameter("wheel_speed_nhc_only_during_gnss_outage", false);
+    node_.get_parameter(
+      "wheel_speed_nhc_only_during_gnss_outage",
+      wheel_speed_nhc_only_during_gnss_outage_);
+    node_.declare_parameter("wheel_speed_gnss_outage_threshold_sec", 1.0);
+    node_.get_parameter(
+      "wheel_speed_gnss_outage_threshold_sec",
+      wheel_speed_gnss_outage_threshold_sec_);
+    node_.declare_parameter("estimate_wheel_speed_scale_factor", false);
+    node_.get_parameter(
+      "estimate_wheel_speed_scale_factor", estimate_wheel_speed_scale_factor_);
+    node_.declare_parameter("wheel_scale_window_size", 100);
+    node_.get_parameter("wheel_scale_window_size", wheel_scale_window_size_);
+    node_.declare_parameter("wheel_scale_min_samples", 20);
+    node_.get_parameter("wheel_scale_min_samples", wheel_scale_min_samples_);
+    node_.declare_parameter("wheel_scale_min_speed_mps", 2.78);
+    node_.get_parameter("wheel_scale_min_speed_mps", wheel_scale_min_speed_mps_);
+    node_.declare_parameter("wheel_scale_max_yaw_rate_radps", 0.0873);
+    node_.get_parameter("wheel_scale_max_yaw_rate_radps", wheel_scale_max_yaw_rate_radps_);
+    node_.declare_parameter("wheel_scale_min_factor", 0.8);
+    node_.get_parameter("wheel_scale_min_factor", wheel_scale_min_factor_);
+    node_.declare_parameter("wheel_scale_max_factor", 1.2);
+    node_.get_parameter("wheel_scale_max_factor", wheel_scale_max_factor_);
+    node_.declare_parameter("wheel_scale_max_sample_age_sec", 0.2);
+    node_.get_parameter("wheel_scale_max_sample_age_sec", wheel_scale_max_sample_age_sec_);
+    node_.declare_parameter("var_wheel_speed", 0.04);
+    node_.get_parameter("var_wheel_speed", var_wheel_speed_);
+    node_.declare_parameter("var_wheel_lateral_velocity", 0.05);
+    node_.get_parameter("var_wheel_lateral_velocity", var_wheel_lateral_velocity_);
+    node_.declare_parameter("var_wheel_vertical_velocity", 0.02);
+    node_.get_parameter("var_wheel_vertical_velocity", var_wheel_vertical_velocity_);
+    node_.declare_parameter("max_wheel_speed_innovation_mps", 5.0);
+    node_.get_parameter("max_wheel_speed_innovation_mps", max_wheel_speed_innovation_mps_);
     node_.declare_parameter("use_zupt", false);
     node_.get_parameter("use_zupt", use_zupt_);
     node_.declare_parameter("zupt_max_angular_velocity_radps", 0.02);
@@ -539,6 +582,30 @@ struct EkfLocalizationComponent::Impl
         RCLCPP_WARN(node_.get_logger(), "invalid max_nhc_variance_scale; fallback to 100.0");
         max_nhc_variance_scale_ = 100.0;
       }
+    }
+    if (use_wheel_speed_ &&
+      (!(wheel_speed_scale_factor_ > 0.0) || !std::isfinite(wheel_speed_scale_factor_) ||
+      !(var_wheel_speed_ > 0.0) || !std::isfinite(var_wheel_speed_) ||
+      !(var_wheel_lateral_velocity_ > 0.0) || !std::isfinite(var_wheel_lateral_velocity_) ||
+      !(var_wheel_vertical_velocity_ > 0.0) || !std::isfinite(var_wheel_vertical_velocity_) ||
+      !(max_wheel_speed_innovation_mps_ >= 0.0) ||
+      !std::isfinite(max_wheel_speed_innovation_mps_) ||
+      !(wheel_speed_gnss_outage_threshold_sec_ >= 0.0) ||
+      !std::isfinite(wheel_speed_gnss_outage_threshold_sec_)))
+    {
+      RCLCPP_WARN(node_.get_logger(), "invalid wheel-speed parameters; disabling wheel speed");
+      use_wheel_speed_ = false;
+    }
+    if (estimate_wheel_speed_scale_factor_ &&
+      (wheel_scale_window_size_ < 1 || wheel_scale_min_samples_ < 1 ||
+      wheel_scale_min_samples_ > wheel_scale_window_size_ ||
+      !(wheel_scale_min_speed_mps_ > 0.0) || !(wheel_scale_max_yaw_rate_radps_ >= 0.0) ||
+      !(wheel_scale_min_factor_ > 0.0) ||
+      !(wheel_scale_max_factor_ >= wheel_scale_min_factor_) ||
+      !(wheel_scale_max_sample_age_sec_ >= 0.0)))
+    {
+      RCLCPP_WARN(node_.get_logger(), "invalid automatic wheel-scale parameters; disabling it");
+      estimate_wheel_speed_scale_factor_ = false;
     }
     if (use_zupt_ || use_zihr_) {
       if (!(zupt_max_angular_velocity_radps_ >= 0.0) ||
@@ -1175,6 +1242,51 @@ struct EkfLocalizationComponent::Impl
         }
       };
 
+    auto wheel_speed_callback =
+      [this](const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg) -> void
+      {
+        if (!initial_pose_received_ || !use_wheel_speed_) {
+          return;
+        }
+        const double speed = msg->twist.twist.linear.x * wheel_speed_scale_factor_;
+        if (!std::isfinite(speed)) {
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000, "skip non-finite wheel speed");
+          return;
+        }
+        latest_raw_wheel_speed_mps_ = msg->twist.twist.linear.x;
+        latest_wheel_speed_time_ =
+          msg->header.stamp.sec + msg->header.stamp.nanosec * 1.0e-9;
+        has_latest_wheel_speed_ = std::isfinite(latest_raw_wheel_speed_mps_) &&
+          std::isfinite(latest_wheel_speed_time_);
+        const Eigen::Vector3d predicted_body_velocity =
+          ekf_.getOrientation().toRotationMatrix().transpose() * ekf_.getVelocity();
+        if (max_wheel_speed_innovation_mps_ > 0.0 &&
+          std::fabs(speed - predicted_body_velocity.x()) > max_wheel_speed_innovation_mps_)
+        {
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000,
+            "skip wheel-speed innovation: measured=%f predicted=%f", speed,
+            predicted_body_velocity.x());
+          return;
+        }
+        const bool gnss_outage = has_previous_gnss_position_time_ &&
+          latest_wheel_speed_time_ - previous_gnss_position_time_ >
+          wheel_speed_gnss_outage_threshold_sec_;
+        const bool use_wheel_nhc = wheel_speed_use_nonholonomic_constraints_ &&
+          (!wheel_speed_nhc_only_during_gnss_outage_ || gnss_outage);
+        const auto status = use_wheel_nhc ?
+          ekf_.observationUpdateBodyVelocityWithStatus(
+          Eigen::Vector3d(speed, 0.0, 0.0),
+          Eigen::Vector3d(
+            var_wheel_speed_, var_wheel_lateral_velocity_, var_wheel_vertical_velocity_)) :
+          ekf_.observationUpdateBodyForwardSpeedWithStatus(speed, var_wheel_speed_);
+        if (status != core::EKFEstimator::ObservationUpdateStatus::kUpdated) {
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000, "skip invalid wheel-speed update");
+        }
+      };
+
     sub_initial_pose_ =
       node_.create_subscription<geometry_msgs::msg::PoseStamped>(
       initial_pose_topic_, 1,
@@ -1214,6 +1326,15 @@ struct EkfLocalizationComponent::Impl
         node_.get_logger(), "GNSS Doppler velocity input: '%s' in frame '%s'",
         gnss_doppler_velocity_topic_.c_str(), reference_frame_id_.c_str());
     }
+    if (use_wheel_speed_) {
+      rclcpp::SensorDataQoS wheel_qos;
+      wheel_qos.keep_last(1);
+      sub_wheel_speed_ =
+        node_.create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
+        wheel_speed_topic_, wheel_qos, wheel_speed_callback);
+      RCLCPP_INFO(
+        node_.get_logger(), "wheel-speed input: '%s'", wheel_speed_topic_.c_str());
+    }
     const std::chrono::milliseconds period(pub_period_);
     timer_ = node_.create_wall_timer(
       std::chrono::duration_cast<std::chrono::nanoseconds>(period),
@@ -1243,6 +1364,7 @@ struct EkfLocalizationComponent::Impl
       imu_msg.angular_velocity.x,
       imu_msg.angular_velocity.y,
       imu_msg.angular_velocity.z);
+    latest_abs_yaw_rate_radps_ = std::fabs(gyro.z());
     const Eigen::Vector3d linear_acceleration = Eigen::Vector3d(
       imu_msg.linear_acceleration.x,
       imu_msg.linear_acceleration.y,
@@ -1537,7 +1659,7 @@ struct EkfLocalizationComponent::Impl
       }
       measurementUpdate(
         measurement_pose_msg, position_variance, true, gnss_lever_arm_body_);
-      if (use_gnss_velocity_) {
+      if (use_gnss_velocity_ || estimate_wheel_speed_scale_factor_) {
         updateVelocityFromGnss(body_pose_msg);
       }
       if (use_gnss_course_yaw_) {
@@ -2269,10 +2391,44 @@ struct EkfLocalizationComponent::Impl
       return;
     }
 
-    updateVelocityMeasurement(velocity_meas, var_gnss_velocity_, "GNSS position-derived");
+    updateWheelSpeedScaleFactor(velocity_meas.head<2>().norm(), t);
+
+    if (use_gnss_velocity_) {
+      updateVelocityMeasurement(velocity_meas, var_gnss_velocity_, "GNSS position-derived");
+    }
 
     previous_velocity_gnss_time_ = t;
     previous_velocity_gnss_position_ = position;
+  }
+
+  void updateWheelSpeedScaleFactor(const double gnss_speed_mps, const double gnss_time)
+  {
+    if (!estimate_wheel_speed_scale_factor_ || !has_latest_wheel_speed_ ||
+      !std::isfinite(gnss_speed_mps) || gnss_speed_mps < wheel_scale_min_speed_mps_ ||
+      std::fabs(latest_raw_wheel_speed_mps_) < wheel_scale_min_speed_mps_ ||
+      latest_abs_yaw_rate_radps_ > wheel_scale_max_yaw_rate_radps_ ||
+      std::fabs(gnss_time - latest_wheel_speed_time_) > wheel_scale_max_sample_age_sec_)
+    {
+      return;
+    }
+    const double sample = gnss_speed_mps / std::fabs(latest_raw_wheel_speed_mps_);
+    if (!std::isfinite(sample) || sample < wheel_scale_min_factor_ ||
+      sample > wheel_scale_max_factor_)
+    {
+      return;
+    }
+    wheel_scale_samples_.push_back(sample);
+    if (wheel_scale_samples_.size() > static_cast<std::size_t>(wheel_scale_window_size_)) {
+      wheel_scale_samples_.erase(wheel_scale_samples_.begin());
+    }
+    if (wheel_scale_samples_.size() >= static_cast<std::size_t>(wheel_scale_min_samples_)) {
+      wheel_speed_scale_factor_ = core::medianWheelSpeedScaleFactor(
+        wheel_scale_samples_, wheel_speed_scale_factor_, wheel_scale_min_factor_,
+        wheel_scale_max_factor_);
+      RCLCPP_INFO_THROTTLE(
+        node_.get_logger(), clock_, 5000, "estimated wheel-speed scale factor: %.6f (%zu samples)",
+        wheel_speed_scale_factor_, wheel_scale_samples_.size());
+    }
   }
 
   void updateVelocityMeasurement(
@@ -2508,6 +2664,29 @@ struct EkfLocalizationComponent::Impl
   double nhc_adaptive_yaw_rate_radps_{0.5};
   double nhc_adaptive_lateral_accel_mps2_{1.5};
   double max_nhc_variance_scale_{100.0};
+  bool use_wheel_speed_{false};
+  std::string wheel_speed_topic_{"/wheel_speed"};
+  double wheel_speed_scale_factor_{1.0};
+  bool wheel_speed_use_nonholonomic_constraints_{false};
+  bool wheel_speed_nhc_only_during_gnss_outage_{false};
+  double wheel_speed_gnss_outage_threshold_sec_{1.0};
+  bool estimate_wheel_speed_scale_factor_{false};
+  int wheel_scale_window_size_{100};
+  int wheel_scale_min_samples_{20};
+  double wheel_scale_min_speed_mps_{2.78};
+  double wheel_scale_max_yaw_rate_radps_{0.0873};
+  double wheel_scale_min_factor_{0.8};
+  double wheel_scale_max_factor_{1.2};
+  double wheel_scale_max_sample_age_sec_{0.2};
+  std::vector<double> wheel_scale_samples_;
+  bool has_latest_wheel_speed_{false};
+  double latest_raw_wheel_speed_mps_{0.0};
+  double latest_wheel_speed_time_{0.0};
+  double latest_abs_yaw_rate_radps_{0.0};
+  double var_wheel_speed_{0.04};
+  double var_wheel_lateral_velocity_{0.05};
+  double var_wheel_vertical_velocity_{0.02};
+  double max_wheel_speed_innovation_mps_{5.0};
   bool use_zupt_{false};
   double zupt_max_angular_velocity_radps_{0.02};
   double zupt_max_acceleration_error_mps2_{0.2};
@@ -2609,6 +2788,8 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr sub_gnss_navsatfix_;
   rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr
     sub_gnss_doppler_velocity_;
+  rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr
+    sub_wheel_speed_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr current_odometry_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;

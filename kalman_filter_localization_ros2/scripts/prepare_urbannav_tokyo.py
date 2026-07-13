@@ -154,6 +154,7 @@ def read_imu(path):
                     float(row['Angular rate X (rad/s)']),
                     -float(row['Angular rate Y (rad/s)']),
                     -float(row['Angular rate Z (rad/s)'])),
+                'wheel_speed': float(row['Wheel velocity (m/s)']),
             })
     if not rows:
         raise ValueError('IMU CSV is empty')
@@ -175,6 +176,7 @@ def write_bag(path, imu_rows, position_rows, origin, initial_yaw):
     """Write time-ordered IMU and local GNSS PoseStamped messages."""
     import rosbag2_py
     from geometry_msgs.msg import PoseStamped
+    from geometry_msgs.msg import TwistWithCovarianceStamped
     from rclpy.serialization import serialize_message
     from sensor_msgs.msg import Imu
 
@@ -191,8 +193,13 @@ def write_bag(path, imu_rows, position_rows, origin, initial_yaw):
     writer.create_topic(rosbag2_py.TopicMetadata(
         id=0, name='/ekf_localization/initial_pose',
         type='geometry_msgs/msg/PoseStamped', serialization_format='cdr'))
+    writer.create_topic(rosbag2_py.TopicMetadata(
+        id=0, name='/wheel_speed',
+        type='geometry_msgs/msg/TwistWithCovarianceStamped',
+        serialization_format='cdr'))
     origin_ecef = geodetic_to_ecef(*origin)
     events = [(row['stamp'], 'imu', row) for row in imu_rows]
+    events.extend((row['stamp'], 'wheel', row) for row in imu_rows)
     events.extend((row['stamp'], 'gnss', row) for row in position_rows)
     first_stamp = min(imu_rows[0]['stamp'], position_rows[0]['stamp'])
     # PoseStamped is volatile. Repeating initialization before sensor playback prevents
@@ -212,6 +219,12 @@ def write_bag(path, imu_rows, position_rows, origin, initial_yaw):
             message.angular_velocity.x, message.angular_velocity.y, \
                 message.angular_velocity.z = row['angular_velocity']
             topic = '/sensing/imu/imu_data'
+        elif kind == 'wheel':
+            message = TwistWithCovarianceStamped()
+            message.header.stamp = timestamp
+            message.header.frame_id = 'base_link'
+            message.twist.twist.linear.x = row['wheel_speed']
+            topic = '/wheel_speed'
         elif kind == 'gnss':
             message = PoseStamped()
             message.header.stamp = timestamp

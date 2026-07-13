@@ -48,6 +48,24 @@ ekf_localization:
       nhc_adaptive_yaw_rate_radps: 0.5
       nhc_adaptive_lateral_accel_mps2: 1.5
       max_nhc_variance_scale: 100.0
+      use_wheel_speed: false
+      wheel_speed_topic: "/wheel_speed"
+      wheel_speed_scale_factor: 1.0
+      wheel_speed_use_nonholonomic_constraints: false
+      wheel_speed_nhc_only_during_gnss_outage: false
+      wheel_speed_gnss_outage_threshold_sec: 1.0
+      estimate_wheel_speed_scale_factor: false
+      wheel_scale_window_size: 100
+      wheel_scale_min_samples: 20
+      wheel_scale_min_speed_mps: 2.78
+      wheel_scale_max_yaw_rate_radps: 0.0873
+      wheel_scale_min_factor: 0.8
+      wheel_scale_max_factor: 1.2
+      wheel_scale_max_sample_age_sec: 0.2
+      var_wheel_speed: 0.04
+      var_wheel_lateral_velocity: 0.05
+      var_wheel_vertical_velocity: 0.02
+      max_wheel_speed_innovation_mps: 5.0
       use_zupt: false
       zupt_max_angular_velocity_radps: 0.02
       zupt_max_acceleration_error_mps2: 0.2

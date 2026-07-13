@@ -613,6 +613,93 @@ public:
     return ObservationUpdateStatus::kUpdated;
   }
 
+  // Observe all velocity components in the body frame. This supports a forward wheel-speed
+  // measurement together with lateral/vertical non-holonomic constraints in one consistent
+  // update. For right-multiplicative attitude error, h = R^T v and
+  // dh / d(dtheta) = skew(h), dh / d(dv) = R^T.
+  ObservationUpdateStatus observationUpdateBodyVelocityWithStatus(
+    const Eigen::Vector3d & measured_body_velocity,
+    const Eigen::Vector3d & variance)
+  {
+    if (!measured_body_velocity.allFinite()) {
+      return ObservationUpdateStatus::kInvalidMeasurement;
+    }
+    if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
+      return ObservationUpdateStatus::kInvalidVariance;
+    }
+
+    Eigen::Quaterniond orientation(
+      x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    orientation.normalize();
+    const Eigen::Matrix3d body_from_world = orientation.toRotationMatrix().transpose();
+    const Eigen::Vector3d predicted = body_from_world * x_.segment(STATE::VX, 3);
+    Eigen::Matrix3d predicted_skew;
+    predicted_skew <<
+      0.0, -predicted.z(), predicted.y(),
+      predicted.z(), 0.0, -predicted.x(),
+      -predicted.y(), predicted.x(), 0.0;
+
+    Eigen::Matrix<double, 3, num_error_state_> H =
+      Eigen::Matrix<double, 3, num_error_state_>::Zero();
+    H.block<3, 3>(0, ERROR_STATE::DVX) = body_from_world;
+    H.block<3, 3>(0, ERROR_STATE::DTHX) = predicted_skew;
+    const Eigen::Matrix3d R = variance.asDiagonal();
+    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
+    const Eigen::Matrix<double, num_error_state_, 3> K =
+      P_ * H.transpose() * S.inverse();
+    const Eigen::Matrix<double, num_error_state_, 1> dx =
+      K * (measured_body_velocity - predicted);
+
+    applyErrorState(dx);
+    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
+    const EigenMatrixErrorState A = I - K * H;
+    P_ = A * P_ * A.transpose() + K * R * K.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
+    return ObservationUpdateStatus::kUpdated;
+  }
+
+  // Observe only forward body-frame velocity. A wheel-speed sensor does not measure
+  // lateral or vertical velocity; those are separate non-holonomic constraints.
+  ObservationUpdateStatus observationUpdateBodyForwardSpeedWithStatus(
+    const double measured_forward_speed,
+    const double variance)
+  {
+    if (!std::isfinite(measured_forward_speed)) {
+      return ObservationUpdateStatus::kInvalidMeasurement;
+    }
+    if (!(variance > 0.0) || !std::isfinite(variance)) {
+      return ObservationUpdateStatus::kInvalidVariance;
+    }
+    Eigen::Quaterniond orientation(
+      x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
+    orientation.normalize();
+    const Eigen::Matrix3d body_from_world = orientation.toRotationMatrix().transpose();
+    const Eigen::Vector3d predicted = body_from_world * x_.segment(STATE::VX, 3);
+    Eigen::Matrix<double, 1, num_error_state_> H =
+      Eigen::Matrix<double, 1, num_error_state_>::Zero();
+    H.block<1, 3>(0, ERROR_STATE::DVX) = body_from_world.row(0);
+    const Eigen::Matrix2d horizontal_velocity_covariance =
+      P_.block<2, 2>(ERROR_STATE::DVX, ERROR_STATE::DVX);
+    const Eigen::RowVector2d horizontal_velocity_jacobian =
+      body_from_world.block<1, 2>(0, 0);
+    const double innovation_variance =
+      (horizontal_velocity_jacobian * horizontal_velocity_covariance *
+      horizontal_velocity_jacobian.transpose())(0, 0) + variance;
+    Eigen::Matrix<double, num_error_state_, 1> K =
+      Eigen::Matrix<double, num_error_state_, 1>::Zero();
+    K.block<2, 1>(ERROR_STATE::DVX, 0) =
+      horizontal_velocity_covariance * horizontal_velocity_jacobian.transpose() /
+      innovation_variance;
+    const Eigen::Matrix<double, num_error_state_, 1> dx =
+      K * (measured_forward_speed - predicted.x());
+    applyErrorState(dx);
+    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
+    const EigenMatrixErrorState A = I - K * H;
+    P_ = A * P_ * A.transpose() + variance * K * K.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
+    return ObservationUpdateStatus::kUpdated;
+  }
+
   void setTauGyroBias(const double tau_gyro_bias)
   {
     tau_gyro_bias_ = tau_gyro_bias;

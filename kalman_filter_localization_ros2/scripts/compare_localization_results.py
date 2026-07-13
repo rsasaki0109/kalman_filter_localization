@@ -76,13 +76,16 @@ def parse_estimate(value):
     return name, path
 
 
-def compare(reference_path, estimates, max_reference_gap, time_offset):
+def compare(
+        reference_path, estimates, max_reference_gap, time_offset,
+        align_translation=False, start_stamp=None, end_stamp=None):
     """Evaluate named trajectories and calculate deltas from the first result."""
     references = read_csv(reference_path)
     rows = []
     for name, path in estimates:
         summary, unused_errors = evaluate(
-            read_csv(path), references, max_reference_gap, time_offset)
+            read_csv(path), references, max_reference_gap, time_offset,
+            align_translation, start_stamp, end_stamp)
         row = {'name': name}
         row.update({metric: summary[metric] for metric in METRICS})
         rows.append(row)
@@ -139,12 +142,16 @@ def main(argv=None):
     parser.add_argument('--estimate', action='append', type=parse_estimate, required=True)
     parser.add_argument('--max-reference-gap', type=float, default=0.2)
     parser.add_argument('--time-offset', type=float, default=0.0)
+    parser.add_argument('--align-translation', action='store_true')
+    parser.add_argument('--start-stamp', type=float)
+    parser.add_argument('--end-stamp', type=float)
     parser.add_argument('--output-csv', required=True)
     parser.add_argument('--output-markdown', required=True)
     args = parser.parse_args(argv)
     try:
         rows = compare(
-            args.reference_csv, args.estimate, args.max_reference_gap, args.time_offset)
+            args.reference_csv, args.estimate, args.max_reference_gap,
+            args.time_offset, args.align_translation, args.start_stamp, args.end_stamp)
         write_csv(args.output_csv, rows)
         write_markdown(args.output_markdown, rows)
         return 0

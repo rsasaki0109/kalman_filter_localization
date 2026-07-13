@@ -47,6 +47,8 @@ RUNNER_SCRIPT = (
     Path(__file__).parents[1] / 'scripts' / 'run_urbannav_ablation.py')
 PREPARE_SCRIPT = (
     Path(__file__).parents[1] / 'scripts' / 'prepare_urbannav_tokyo.py')
+APPLANIX_PREPARE_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'prepare_applanix_open_sky.py')
 DATA = Path(__file__).parent / 'data'
 SPEC = importlib.util.spec_from_file_location('evaluate_localization', SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -64,6 +66,10 @@ PREPARE_SPEC = importlib.util.spec_from_file_location(
     'prepare_urbannav_tokyo', PREPARE_SCRIPT)
 PREPARE_MODULE = importlib.util.module_from_spec(PREPARE_SPEC)
 PREPARE_SPEC.loader.exec_module(PREPARE_MODULE)
+APPLANIX_PREPARE_SPEC = importlib.util.spec_from_file_location(
+    'prepare_applanix_open_sky', APPLANIX_PREPARE_SCRIPT)
+APPLANIX_PREPARE_MODULE = importlib.util.module_from_spec(APPLANIX_PREPARE_SPEC)
+APPLANIX_PREPARE_SPEC.loader.exec_module(APPLANIX_PREPARE_MODULE)
 
 
 class EvaluateLocalizationTest(unittest.TestCase):
@@ -100,6 +106,18 @@ class EvaluateLocalizationTest(unittest.TestCase):
         self.assertAlmostEqual(summary['rmse_3d_m'], math.sqrt(0.26))
         self.assertAlmostEqual(summary['yaw_rmse_deg'], 2.0)
         self.assertAlmostEqual(errors[0]['horizontal'], 0.5)
+
+    def test_translation_alignment_removes_constant_datum_offset(self):
+        references = [MODULE.Sample(0.0, 0.0, 0.0, 0.0, 0.0),
+                      MODULE.Sample(1.0, 1.0, 2.0, 3.0, 0.0)]
+        estimates = [MODULE.Sample(0.0, 4.0, -5.0, 8.0, 0.0),
+                     MODULE.Sample(1.0, 5.0, -3.0, 11.0, 0.0)]
+        summary, errors = MODULE.evaluate(
+            estimates, references, 2.0, align_translation=True)
+        self.assertAlmostEqual(summary['rmse_3d_m'], 0.0)
+        self.assertEqual(
+            summary['translation_alignment_m'], {'x': 4.0, 'y': -5.0, 'z': 8.0})
+        self.assertTrue(all(row['error_3d'] == 0.0 for row in errors))
 
     def test_yaw_interpolation_wraps_at_pi(self):
         references = [MODULE.Sample(0.0, 0.0, 0.0, 0.0, math.radians(179)),
@@ -159,6 +177,20 @@ class EvaluateLocalizationTest(unittest.TestCase):
         self.assertAlmostEqual(rows[0]['delta_rmse_3d_m'], 0.0)
         self.assertAlmostEqual(rows[1]['delta_rmse_3d_m'], 0.0)
 
+    def test_evaluate_selects_inclusive_time_range(self):
+        estimates = [MODULE.Sample(stamp, stamp, 0.0, 0.0, 0.0)
+                     for stamp in (0.0, 1.0, 2.0)]
+        references = list(estimates)
+        summary, errors = MODULE.evaluate(
+            estimates, references, 0.2, start_stamp=1.0, end_stamp=2.0)
+        self.assertEqual(summary['estimate_samples'], 2)
+        self.assertEqual([row['stamp'] for row in errors], [1.0, 2.0])
+
+    def test_evaluate_rejects_reversed_time_range(self):
+        samples = [MODULE.Sample(1.0, 0.0, 0.0, 0.0, 0.0)]
+        with self.assertRaisesRegex(ValueError, 'start-stamp'):
+            MODULE.evaluate(samples, samples, 0.2, start_stamp=2.0, end_stamp=1.0)
+
     def test_ablation_comparison_writes_csv_and_markdown(self):
         rows = COMPARISON_MODULE.compare(
             DATA / 'reference.csv', [('baseline', DATA / 'estimate.csv')],
@@ -197,19 +229,18 @@ class EvaluateLocalizationTest(unittest.TestCase):
                 '--output-dir', str(output),
                 '--base-profile', str(profiles / 'urbannav_tokyo_tuned.yaml'),
                 '--profiles-dir', str(profiles),
+                '--profile', 'wheel',
                 '--dry-run',
             ])
             self.assertEqual(result, 0)
             manifest = json.loads(
                 (output / 'manifest.json').read_text(encoding='utf-8'))
-            self.assertEqual(
-                [run['name'] for run in manifest['runs']],
-                ['baseline', 'nhc', 'robust', 'full'])
-            full = yaml.safe_load(
-                (output / 'configs' / 'full.yaml').read_text(encoding='utf-8'))
-            parameters = full['ekf_localization']['ros__parameters']
+            self.assertEqual([run['name'] for run in manifest['runs']], ['wheel'])
+            wheel = yaml.safe_load(
+                (output / 'configs' / 'wheel.yaml').read_text(encoding='utf-8'))
+            parameters = wheel['ekf_localization']['ros__parameters']
             self.assertTrue(parameters['use_gnss'])
-            self.assertTrue(parameters['use_zupt'])
+            self.assertTrue(parameters['use_wheel_speed'])
 
     def test_urbannav_geodetic_origin_maps_to_zero_enu(self):
         origin = (35.62931853, 139.78712595, 44.6995)
@@ -217,6 +248,18 @@ class EvaluateLocalizationTest(unittest.TestCase):
         enu = PREPARE_MODULE.ecef_to_enu(
             ecef, ecef, origin[0], origin[1])
         self.assertEqual(enu, (0.0, 0.0, 0.0))
+
+    def test_applanix_gravity_compensated_acceleration_restores_specific_force(self):
+        acceleration = APPLANIX_PREPARE_MODULE.applanix_acceleration_to_specific_force(
+            0.0, 0.0, 0.0, 0.0, 0.0)
+        self.assertAlmostEqual(acceleration[0], 0.0)
+        self.assertAlmostEqual(acceleration[1], 0.0)
+        self.assertAlmostEqual(acceleration[2], 9.80665)
+
+    def test_applanix_specific_force_mode_only_changes_axes(self):
+        acceleration = APPLANIX_PREPARE_MODULE.applanix_acceleration_to_specific_force(
+            1.0, 2.0, 3.0, 10.0, 20.0, gravity_compensated=False)
+        self.assertEqual(acceleration, (1.0, -2.0, -3.0))
 
     def test_urbannav_gps_stamp_is_continuous_across_weeks(self):
         before = PREPARE_MODULE.gps_stamp(2032, 604799.9)

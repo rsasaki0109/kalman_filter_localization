@@ -1,0 +1,21 @@
+ekf_localization:
+  ros__parameters:
+    use_wheel_speed: true
+    wheel_speed_topic: "/wheel_speed"
+    wheel_speed_scale_factor: 1.0
+    wheel_speed_use_nonholonomic_constraints: true
+    wheel_speed_nhc_only_during_gnss_outage: false
+    wheel_speed_gnss_outage_threshold_sec: 1.0
+    estimate_wheel_speed_scale_factor: true
+    var_wheel_speed: 0.04
+    max_wheel_speed_innovation_mps: 10.0
+    use_nonholonomic_constraint: false
+    var_nhc_lateral_velocity: 0.05
+    var_nhc_vertical_velocity: 0.02
+    min_nhc_forward_speed_mps: 0.5
+    nhc_adaptive_yaw_rate_radps: 0.5
+    nhc_adaptive_lateral_accel_mps2: 1.5
+    max_nhc_variance_scale: 100.0
+    gnss_position_robust_loss: "huber"
+    gnss_position_robust_tuning: 2.5
+    max_gnss_position_robust_variance_scale: 100.0

@@ -108,6 +108,11 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
   RENAME prepare_urbannav_tokyo
 )
+install(PROGRAMS
+  scripts/prepare_applanix_open_sky.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME prepare_applanix_open_sky
+)
 
 install(TARGETS
   ekf_localization_node

@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace kalman_filter_localization
 {
@@ -102,6 +103,35 @@ inline Eigen::Vector3d sanitizeMeasurementVariance(
     }
   }
   return result;
+}
+
+inline double medianWheelSpeedScaleFactor(
+  const std::vector<double> & scale_factor_samples,
+  const double fallback,
+  const double minimum,
+  const double maximum)
+{
+  if (scale_factor_samples.empty() || !std::isfinite(fallback) ||
+    !std::isfinite(minimum) || !std::isfinite(maximum) || minimum > maximum)
+  {
+    return fallback;
+  }
+  std::vector<double> sorted_samples;
+  sorted_samples.reserve(scale_factor_samples.size());
+  for (const double sample : scale_factor_samples) {
+    if (std::isfinite(sample) && sample >= minimum && sample <= maximum) {
+      sorted_samples.push_back(sample);
+    }
+  }
+  if (sorted_samples.empty()) {
+    return fallback;
+  }
+  std::sort(sorted_samples.begin(), sorted_samples.end());
+  const std::size_t middle = sorted_samples.size() / 2U;
+  if (sorted_samples.size() % 2U == 0U) {
+    return 0.5 * (sorted_samples[middle - 1U] + sorted_samples[middle]);
+  }
+  return sorted_samples[middle];
 }
 }  // namespace core
 }  // namespace kalman_filter_localization

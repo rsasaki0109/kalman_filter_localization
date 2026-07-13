@@ -45,7 +45,9 @@ import time
 import yaml
 
 
-PROFILE_NAMES = ('baseline', 'nhc', 'robust', 'full')
+PROFILE_NAMES = (
+    'baseline', 'nhc', 'robust', 'full', 'wheel', 'wheel_auto',
+    'wheel_nhc', 'wheel_nhc_fixed')
 ESTIMATE_TOPIC = '/ekf_localization/current_pose'
 
 
@@ -69,13 +71,15 @@ def load_yaml(path):
     return value
 
 
-def prepare_configs(base_profile, profiles_directory, output_directory):
+def prepare_configs(
+        base_profile, profiles_directory, output_directory,
+        profile_names=PROFILE_NAMES):
     """Write the exact merged parameter file used by every experiment."""
     base = load_yaml(base_profile)
     config_directory = output_directory / 'configs'
     config_directory.mkdir(parents=True, exist_ok=True)
     paths = {}
-    for name in PROFILE_NAMES:
+    for name in profile_names:
         override = load_yaml(profiles_directory / ('research_' + name + '.yaml'))
         merged = deep_merge(base, override)
         path = config_directory / (name + '.yaml')
@@ -174,10 +178,11 @@ def run_profile(name, config, input_bag, output_directory, topic, rate, startup_
 
 
 def command_manifest(
-        configs, input_bag, output_directory, topic, rate, startup_delay):
+        configs, input_bag, output_directory, topic, rate, startup_delay,
+        profile_names=PROFILE_NAMES):
     """Build a machine-readable dry-run manifest."""
     runs = []
-    for name in PROFILE_NAMES:
+    for name in profile_names:
         run_directory = output_directory / name
         runs.append({
             'name': name,
@@ -208,6 +213,9 @@ def main(argv=None):
     parser.add_argument('--startup-delay', type=float, default=2.0)
     parser.add_argument('--max-reference-gap', type=float, default=0.2)
     parser.add_argument('--time-offset', type=float, default=0.0)
+    parser.add_argument(
+        '--profile', action='append', choices=PROFILE_NAMES,
+        help='run only this profile; repeat for multiple profiles')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     try:
@@ -220,11 +228,20 @@ def main(argv=None):
         if args.rate <= 0.0 or args.startup_delay < 0.0:
             raise ValueError('rate must be positive and startup delay non-negative')
         args.output_dir.mkdir(parents=True, exist_ok=True)
+        profile_names = tuple(args.profile) if args.profile else PROFILE_NAMES
         configs = prepare_configs(
-            args.base_profile, args.profiles_dir, args.output_dir)
+            args.base_profile, args.profiles_dir, args.output_dir, profile_names)
         manifest = command_manifest(
             configs, args.input_bag, args.output_dir, args.estimate_topic,
-            args.rate, args.startup_delay)
+            args.rate, args.startup_delay, profile_names)
+        manifest.update({
+            'reference_csv': str(args.reference_csv),
+            'profiles': list(profile_names),
+            'rate': args.rate,
+            'startup_delay': args.startup_delay,
+            'max_reference_gap': args.max_reference_gap,
+            'time_offset': args.time_offset,
+        })
         manifest_path = args.output_dir / 'manifest.json'
         manifest_path.write_text(
             json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
@@ -232,7 +249,7 @@ def main(argv=None):
             print(manifest_path)
             return 0
         estimates = []
-        for name in PROFILE_NAMES:
+        for name in profile_names:
             estimate, unused_commands = run_profile(
                 name, configs[name], args.input_bag, args.output_dir,
                 args.estimate_topic, args.rate, args.startup_delay)
