@@ -7,27 +7,32 @@ on:
 jobs:
   unit-synthetic-schema:
     runs-on: ubuntu-24.04
+    container: ros:jazzy
     steps:
       - uses: actions/checkout@v4
-      - uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: jazzy
-      - uses: ros-tooling/action-ros-ci@v0.4
-        with:
-          package-name: kalman_filter_localization_core kalman_filter_localization
-          target-ros2-distro: jazzy
-          colcon-defaults: |
-            {
-              "build": {"cmake-args": ["-DBUILD_TESTING=ON"]},
-              "test": {"event-handlers": ["console_direct+"]}
-            }
+      - name: Install dependencies
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          rosdep update
+          rosdep install --from-paths . --ignore-src --rosdistro jazzy -r -y
+      - name: Build and test
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build \
+            --packages-select kalman_filter_localization_core kalman_filter_localization \
+            --cmake-args -DBUILD_TESTING=ON
+          source install/setup.bash
+          colcon test \
+            --packages-select kalman_filter_localization_core kalman_filter_localization \
+            --event-handlers console_direct+
+          colcon test-result --verbose
       - name: Deterministic short-bag replay smoke
         shell: bash
         run: |
           source /opt/ros/jazzy/setup.bash
-          overlay_setup="$(find "$GITHUB_WORKSPACE" -path '*/install/setup.bash' -print -quit)"
-          test -n "$overlay_setup"
-          source "$overlay_setup"
+          source install/setup.bash
           python3 kalman_filter_localization_ros2/scripts/generate_short_bag_fixture.py \
             --bag .data/ci/input_bag --reference-csv .data/ci/reference.csv
           python3 kalman_filter_localization_ros2/scripts/run_urbannav_ablation.py \
