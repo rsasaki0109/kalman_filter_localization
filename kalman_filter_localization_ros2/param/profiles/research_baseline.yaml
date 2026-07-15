@@ -7,5 +7,6 @@ ekf_localization:
     use_continuous_process_noise_density: false
     use_second_order_state_transition: false
     use_second_order_process_noise: false
+    propagation_model: "legacy"
     gnss_position_robust_loss: "none"
     gnss_navsatfix_use_position_covariance: false

@@ -4,7 +4,7 @@
   <version>0.0.0</version>
   <description>ROS2-free EKF core for kalman_filter_localization</description>
   <maintainer email="rsasaki0109@gmail.com">sasaki</maintainer>
-  <license>TODO: License declaration</license>
+  <license>BSD-3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>eigen3_cmake_module</buildtool_depend>
@@ -21,4 +21,3 @@
     <build_type>ament_cmake</build_type>
   </export>
 </package>
-

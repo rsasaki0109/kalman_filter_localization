@@ -45,10 +45,16 @@ COMPARISON_SCRIPT = (
     Path(__file__).parents[1] / 'scripts' / 'compare_localization_results.py')
 RUNNER_SCRIPT = (
     Path(__file__).parents[1] / 'scripts' / 'run_urbannav_ablation.py')
+REPEATABILITY_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'verify_repeatability.py')
 PREPARE_SCRIPT = (
     Path(__file__).parents[1] / 'scripts' / 'prepare_urbannav_tokyo.py')
 APPLANIX_PREPARE_SCRIPT = (
     Path(__file__).parents[1] / 'scripts' / 'prepare_applanix_open_sky.py')
+ALLAN_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'convert_allan_variance.py')
+CONSISTENCY_SCRIPT = (
+    Path(__file__).parents[1] / 'scripts' / 'evaluate_consistency.py')
 DATA = Path(__file__).parent / 'data'
 SPEC = importlib.util.spec_from_file_location('evaluate_localization', SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -62,6 +68,18 @@ RUNNER_SPEC = importlib.util.spec_from_file_location(
     'run_urbannav_ablation', RUNNER_SCRIPT)
 RUNNER_MODULE = importlib.util.module_from_spec(RUNNER_SPEC)
 RUNNER_SPEC.loader.exec_module(RUNNER_MODULE)
+REPEATABILITY_SPEC = importlib.util.spec_from_file_location(
+    'verify_repeatability', REPEATABILITY_SCRIPT)
+REPEATABILITY_MODULE = importlib.util.module_from_spec(REPEATABILITY_SPEC)
+REPEATABILITY_SPEC.loader.exec_module(REPEATABILITY_MODULE)
+ALLAN_SPEC = importlib.util.spec_from_file_location(
+    'convert_allan_variance', ALLAN_SCRIPT)
+ALLAN_MODULE = importlib.util.module_from_spec(ALLAN_SPEC)
+ALLAN_SPEC.loader.exec_module(ALLAN_MODULE)
+CONSISTENCY_SPEC = importlib.util.spec_from_file_location(
+    'evaluate_consistency', CONSISTENCY_SCRIPT)
+CONSISTENCY_MODULE = importlib.util.module_from_spec(CONSISTENCY_SPEC)
+CONSISTENCY_SPEC.loader.exec_module(CONSISTENCY_MODULE)
 PREPARE_SPEC = importlib.util.spec_from_file_location(
     'prepare_urbannav_tokyo', PREPARE_SCRIPT)
 PREPARE_MODULE = importlib.util.module_from_spec(PREPARE_SPEC)
@@ -191,6 +209,45 @@ class EvaluateLocalizationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'start-stamp'):
             MODULE.evaluate(samples, samples, 0.2, start_stamp=2.0, end_stamp=1.0)
 
+    def test_evaluate_reports_ape_rpe_missing_policy_and_outage(self):
+        references = [MODULE.Sample(float(index), float(index), 0.0, 0.0, 0.0)
+                      for index in range(6)]
+        estimates = [MODULE.Sample(float(index), 1.1 * index, 0.0, 0.0, 0.0)
+                     for index in range(6)]
+        summary, unused_errors = MODULE.evaluate(
+            estimates, references, 0.25,
+            rpe_time_horizons=(1.0,), rpe_distance_horizons=(2.0,),
+            outage_segments=({'name': 'test', 'start': 1.0, 'end': 3.0},),
+            settling_threshold_m=0.25, settling_window_sec=1.0)
+        self.assertAlmostEqual(
+            summary['ape']['translation_3d_m']['rmse'], summary['rmse_3d_m'])
+        self.assertAlmostEqual(
+            summary['rpe']['time']['1.0']['translation_m']['rmse'], 0.1)
+        self.assertAlmostEqual(
+            summary['rpe']['distance']['2.0']['translation_m']['rmse'], 0.2)
+        self.assertEqual(summary['missing_ratio'], 0.0)
+        self.assertEqual(summary['evaluation_policy']['alignment'], 'none')
+        self.assertEqual(summary['outages'][0]['name'], 'test')
+        self.assertAlmostEqual(summary['outages'][0]['endpoint_error_3d_m'], 0.3)
+
+    def test_parse_outage_segment_validates_order(self):
+        self.assertEqual(MODULE.parse_outage_segment('urban,1,2'),
+                         {'name': 'urban', 'start': 1.0, 'end': 2.0})
+        with self.assertRaisesRegex(Exception, 'below END'):
+            MODULE.parse_outage_segment('bad,2,1')
+
+    def test_consistency_evaluator_reports_nees_nis_and_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'consistency.csv'
+            path.write_text(
+                'nees,nis_position\n15,3\n14,2\n16,4\n15,3\n', encoding='utf-8')
+            result = CONSISTENCY_MODULE.evaluate_csv(
+                path, [('nees', 15), ('nis_position', 3)])
+        self.assertEqual(result['nees']['mean'], 15.0)
+        self.assertEqual(result['nis_position']['mean'], 3.0)
+        self.assertEqual(result['nees']['coverage_95'], 1.0)
+        self.assertEqual(result['nis_position']['coverage_95'], 1.0)
+
     def test_ablation_comparison_writes_csv_and_markdown(self):
         rows = COMPARISON_MODULE.compare(
             DATA / 'reference.csv', [('baseline', DATA / 'estimate.csv')],
@@ -223,24 +280,181 @@ class EvaluateLocalizationTest(unittest.TestCase):
             input_bag = root / 'input_bag'
             input_bag.mkdir()
             output = root / 'results'
-            result = RUNNER_MODULE.main([
-                '--input-bag', str(input_bag),
-                '--reference-csv', str(DATA / 'reference.csv'),
-                '--output-dir', str(output),
-                '--base-profile', str(profiles / 'urbannav_tokyo_tuned.yaml'),
-                '--profiles-dir', str(profiles),
-                '--profile', 'wheel',
-                '--dry-run',
-            ])
+            with mock.patch.object(
+                    RUNNER_MODULE, 'runtime_artifacts', return_value={
+                        'node': {'path': '/installed/node', 'sha256': '1' * 64},
+                        'component': {
+                            'path': '/installed/component.so', 'sha256': '2' * 64},
+                        'runner': {'path': '/installed/runner', 'sha256': '3' * 64},
+                    }):
+                result = RUNNER_MODULE.main([
+                    '--input-bag', str(input_bag),
+                    '--reference-csv', str(DATA / 'reference.csv'),
+                    '--output-dir', str(output),
+                    '--base-profile', str(profiles / 'urbannav_tokyo_tuned.yaml'),
+                    '--profiles-dir', str(profiles),
+                    '--profile', 'wheel',
+                    '--dry-run',
+                ])
             self.assertEqual(result, 0)
             manifest = json.loads(
                 (output / 'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(manifest['schema_version'], 2)
             self.assertEqual([run['name'] for run in manifest['runs']], ['wheel'])
+            self.assertEqual(len(manifest['inputs']['bag']['sha256']), 64)
+            self.assertEqual(len(manifest['inputs']['reference']['sha256']), 64)
+            self.assertEqual(len(manifest['runs'][0]['config_artifact']['sha256']), 64)
+            self.assertIn('commit', manifest['repository'])
+            self.assertIn('working_tree_sha256', manifest['repository'])
+            self.assertIn('python', manifest['environment'])
+            self.assertEqual(
+                manifest['runtime_artifacts']['component']['sha256'], '2' * 64)
+            self.assertEqual(manifest['evaluation_policy']['alignment'], 'none')
+            self.assertEqual(manifest['evaluation_policy']['split_role'], 'tuning')
+            self.assertEqual(manifest['evaluation_policy']['segments'], [])
+            self.assertEqual(manifest['drain_timeout_sec'], 300.0)
             wheel = yaml.safe_load(
                 (output / 'configs' / 'wheel.yaml').read_text(encoding='utf-8'))
             parameters = wheel['ekf_localization']['ros__parameters']
             self.assertTrue(parameters['use_gnss'])
             self.assertTrue(parameters['use_wheel_speed'])
+
+    def test_parameter_profiles_only_override_declared_base_parameters(self):
+        parameter_root = Path(__file__).parents[1] / 'param'
+        base = yaml.safe_load((parameter_root / 'ekf.yaml').read_text(encoding='utf-8'))
+        declared = set(base['ekf_localization']['ros__parameters'])
+        for profile_path in (parameter_root / 'profiles').glob('research_*.yaml'):
+            profile = yaml.safe_load(profile_path.read_text(encoding='utf-8'))
+            node = profile.get('ekf_localization', profile.get('/**', {}))
+            overrides = set(node.get('ros__parameters', {}))
+            self.assertFalse(overrides - declared,
+                             '{} has undeclared parameters {}'.format(
+                                 profile_path.name, sorted(overrides - declared)))
+
+    def test_urbannav_runner_directory_hash_includes_names_and_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'a').write_bytes(b'one')
+            first = RUNNER_MODULE.sha256_path(root)
+            self.assertEqual(first, RUNNER_MODULE.sha256_path(root))
+            (root / 'a').rename(root / 'b')
+            self.assertNotEqual(first, RUNNER_MODULE.sha256_path(root))
+            renamed = RUNNER_MODULE.sha256_path(root)
+            (root / 'b').write_bytes(b'two')
+            self.assertNotEqual(renamed, RUNNER_MODULE.sha256_path(root))
+
+    def test_urbannav_runner_hashes_installed_runtime_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            executable = prefix / 'lib' / 'kalman_filter_localization' / \
+                'ekf_localization_node'
+            component = prefix / 'lib' / 'libekf_localization_component.so'
+            executable.parent.mkdir(parents=True)
+            component.parent.mkdir(parents=True, exist_ok=True)
+            executable.write_bytes(b'node-binary')
+            component.write_bytes(b'component-binary')
+            completed = mock.Mock(stdout=str(prefix) + '\n')
+            with mock.patch.object(
+                    RUNNER_MODULE.subprocess, 'run', return_value=completed) as run:
+                artifacts = RUNNER_MODULE.runtime_artifacts()
+            run.assert_called_once_with(
+                ['ros2', 'pkg', 'prefix', 'kalman_filter_localization'],
+                check=True, capture_output=True, text=True)
+            self.assertEqual(
+                artifacts['node']['sha256'],
+                RUNNER_MODULE.sha256_path(executable))
+            self.assertEqual(
+                artifacts['component']['sha256'],
+                RUNNER_MODULE.sha256_path(component))
+            self.assertEqual(
+                artifacts['runner']['path'], str(RUNNER_SCRIPT.resolve()))
+
+    def test_urbannav_runner_parses_component_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'localization.log'
+            path.write_text(
+                '[INFO] input_counts initial_pose=20 imu=62040 odom=0 '
+                'gnss_pose=3790 gnss_navsatfix=0 gnss_doppler=0 '
+                'wheel=62040 published_pose=62040 reorder_late=0 '
+                'reorder_buffered=0\n', encoding='utf-8')
+            counts = RUNNER_MODULE.read_component_counts(path)
+            self.assertEqual(counts['imu'], 62040)
+            self.assertEqual(counts['gnss_pose'], 3790)
+            self.assertEqual(counts['published_pose'], 62040)
+            self.assertEqual(counts['reorder_late'], 0)
+
+    def test_urbannav_runner_parses_performance_metrics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'localization.log'
+            path.write_text(
+                '[INFO] performance rtf=2.5 imu_callback_mean_us=125.0 '
+                'imu_callback_max_us=800.0 history_memory_bytes=4096 '
+                'history_imu=101 history_measurements=5 rewinds=3\n',
+                encoding='utf-8')
+            metrics = RUNNER_MODULE.read_performance_metrics(path)
+        self.assertEqual(metrics['real_time_factor'], 2.5)
+        self.assertEqual(metrics['history_memory_bytes'], 4096)
+        self.assertEqual(metrics['rewind_count'], 3)
+
+    def test_urbannav_runner_checks_configured_input_counts(self):
+        profiles = Path(__file__).parents[1] / 'param' / 'profiles'
+        bag = {'rosbag': {'topics': {
+            '/ekf_localization/initial_pose': 20,
+            '/sensing/imu/imu_data': 62040,
+            '/gnss_pose': 3790,
+            '/wheel_speed': 62040,
+        }}}
+        expected = RUNNER_MODULE.expected_component_counts(
+            profiles / 'urbannav_tokyo_tuned.yaml', bag)
+        self.assertEqual(expected['imu'], 62040)
+        self.assertEqual(expected['gnss_pose'], 3790)
+        self.assertEqual(expected['published_pose'], 62040)
+        self.assertEqual(expected['reorder_late'], 0)
+        passed = RUNNER_MODULE.check_component_counts(
+            expected, dict(expected, published_pose=62040))
+        self.assertTrue(passed['passed'])
+        failed = RUNNER_MODULE.check_component_counts(
+            expected, dict(expected, imu=60000))
+        self.assertFalse(failed['passed'])
+        self.assertEqual(failed['mismatches']['imu']['expected'], 62040)
+
+    def test_repeatability_comparison_reports_first_numerical_divergence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference = root / 'reference.csv'
+            candidate = root / 'candidate.csv'
+            reference.write_text(
+                'stamp,x,y,z,yaw\n1,0,0,0,3.141592653589793\n2,1,2,3,0\n',
+                encoding='utf-8')
+            candidate.write_text(
+                'stamp,x,y,z,yaw\n1,0,0,0,-3.141592653589793\n2,1.001,2,3,0\n',
+                encoding='utf-8')
+            report = REPEATABILITY_MODULE.compare_csv(
+                reference, candidate, stamp_tolerance=0.0,
+                value_tolerance=1.0e-6)
+            self.assertFalse(report['passed'])
+            self.assertEqual(report['first_mismatch']['sample_index'], 2)
+            self.assertAlmostEqual(
+                report['maximum_absolute_difference']['x'], 0.001)
+            self.assertLess(report['maximum_absolute_difference']['yaw'], 1.0e-12)
+
+    def test_repeatability_comparison_rejects_sample_count_difference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference = root / 'reference.csv'
+            candidate = root / 'candidate.csv'
+            reference.write_text(
+                'stamp,x,y,z,yaw\n1,0,0,0,0\n2,0,0,0,0\n',
+                encoding='utf-8')
+            candidate.write_text(
+                'stamp,x,y,z,yaw\n1,0,0,0,0\n', encoding='utf-8')
+            report = REPEATABILITY_MODULE.compare_csv(
+                reference, candidate, stamp_tolerance=0.0,
+                value_tolerance=0.0)
+            self.assertFalse(report['passed'])
+            self.assertEqual(report['reference_samples'], 2)
+            self.assertEqual(report['candidate_samples'], 1)
+            self.assertEqual(report['first_mismatch']['reason'], 'sample_count')
 
     def test_urbannav_geodetic_origin_maps_to_zero_enu(self):
         origin = (35.62931853, 139.78712595, 44.6995)
@@ -265,6 +479,26 @@ class EvaluateLocalizationTest(unittest.TestCase):
         before = PREPARE_MODULE.gps_stamp(2032, 604799.9)
         after = PREPARE_MODULE.gps_stamp(2033, 0.1)
         self.assertAlmostEqual(after - before, 0.2, places=5)
+
+    def test_allan_converter_squares_unit_tagged_amplitude_densities(self):
+        document = {
+            'gyro_white_noise_density': {
+                'value': 0.02, 'unit': 'rad/s/sqrt(Hz)'},
+            'accel_white_noise_density': {
+                'value': 0.1, 'unit': 'm/s^2/sqrt(Hz)'},
+            'gyro_bias_random_walk': {
+                'value': 0.003, 'unit': 'rad/s^2/sqrt(Hz)'},
+            'accel_bias_random_walk': {
+                'value': 0.004, 'unit': 'm/s^3/sqrt(Hz)'},
+        }
+        converted = ALLAN_MODULE.convert(document)
+        self.assertAlmostEqual(converted['var_imu_w'], 0.0004)
+        self.assertAlmostEqual(converted['var_imu_acc'], 0.01)
+        self.assertAlmostEqual(converted['var_imu_gyro_bias'], 0.000009)
+        self.assertAlmostEqual(converted['var_imu_acc_bias'], 0.000016)
+        document['gyro_white_noise_density']['unit'] = 'deg/s/sqrt(Hz)'
+        with self.assertRaises(ValueError):
+            ALLAN_MODULE.convert(document)
 
 
 if __name__ == '__main__':

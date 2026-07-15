@@ -1,0 +1,42 @@
+name: full-dataset-regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_url:
+        description: Authenticated URL for the registered benchmark tarball
+        required: true
+        type: string
+  schedule:
+    - cron: '17 18 * * 1'
+
+jobs:
+  full-regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: jazzy
+      - name: Fetch registered benchmark
+        env:
+          DATASET_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.dataset_url || secrets.NIGHTLY_DATASET_URL }}
+        run: |
+          test -n "$DATASET_URL"
+          mkdir -p .data/nightly_input
+          curl --fail --location "$DATASET_URL" | tar -xz -C .data/nightly_input
+      - uses: ros-tooling/action-ros-ci@v0.4
+        with:
+          package-name: kalman_filter_localization_core kalman_filter_localization
+          target-ros2-distro: jazzy
+      - name: Run registered full-dataset job
+        run: .data/nightly_input/run_registered_regression.sh "$GITHUB_WORKSPACE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: localization-regression-${{ github.run_id }}
+          path: |
+            .data/nightly_results/**/manifest.json
+            .data/nightly_results/**/comparison.csv
+            .data/nightly_results/**/comparison.md
+            .data/nightly_results/**/localization.log

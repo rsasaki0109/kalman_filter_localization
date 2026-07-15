@@ -4,7 +4,7 @@
   <version>0.0.0</version>
   <description>ros2  package of Kalman Filter Based Localization</description>
   <maintainer email="rsasaki0109@gmail.com">sasaki</maintainer>
-  <license>TODO: License declaration</license>
+  <license>BSD-3-Clause</license>
 
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rclpy</exec_depend>
@@ -24,6 +24,7 @@
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>kalman_filter_localization_core</depend>
 
   <test_depend>ament_lint_auto</test_depend>

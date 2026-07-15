@@ -33,11 +33,15 @@
 #define KALMAN_FILTER_LOCALIZATION__CORE__EKF_ESTIMATOR_HPP_
 
 #include <Eigen/Core>
+#include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
+#include <unsupported/Eigen/MatrixFunctions>
 
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 
 // NOTE:
 // This file intentionally contains no ROS2 includes so it can be reused in
@@ -70,6 +74,8 @@ public:
     kSkippedNoTimeBase,
     kNonPositiveDt,
     kDtTooLarge,
+    kInvalidInput,
+    kNumericalFailure,
   };
 
   enum class ObservationUpdateStatus : std::uint8_t
@@ -77,6 +83,39 @@ public:
     kUpdated = 0,
     kInvalidMeasurement,
     kInvalidVariance,
+    kNumericalFailure,
+  };
+
+  enum class ObservationRejectReason : std::uint8_t
+  {
+    kNone = 0,
+    kInvalidMeasurement,
+    kInvalidCovariance,
+    kInnovationNotPositiveDefinite,
+    kNisGate,
+    kNumericalInvariant,
+  };
+
+  struct ObservationUpdateDiagnostics3
+  {
+    ObservationUpdateStatus status{ObservationUpdateStatus::kInvalidMeasurement};
+    ObservationRejectReason reason{ObservationRejectReason::kInvalidMeasurement};
+    Eigen::Vector3d innovation{Eigen::Vector3d::Constant(
+        std::numeric_limits<double>::quiet_NaN())};
+    Eigen::Matrix3d innovation_covariance{Eigen::Matrix3d::Constant(
+        std::numeric_limits<double>::quiet_NaN())};
+    double nis{std::numeric_limits<double>::quiet_NaN()};
+    bool accepted{false};
+  };
+
+  struct ObservationUpdateDiagnostics1
+  {
+    ObservationUpdateStatus status{ObservationUpdateStatus::kInvalidMeasurement};
+    ObservationRejectReason reason{ObservationRejectReason::kInvalidMeasurement};
+    double innovation{std::numeric_limits<double>::quiet_NaN()};
+    double innovation_variance{std::numeric_limits<double>::quiet_NaN()};
+    double nis{std::numeric_limits<double>::quiet_NaN()};
+    bool accepted{false};
   };
 
   enum class RobustLoss : std::uint8_t
@@ -85,6 +124,237 @@ public:
     kHuber,
     kCauchy,
   };
+
+  enum class PropagationModel : std::uint8_t
+  {
+    kLegacy = 0,
+    kFast,
+    kExact,
+  };
+
+  static constexpr int kErrorStateSize = 15;
+  using ErrorStateVector = Eigen::Matrix<double, kErrorStateSize, 1>;
+  using ErrorStateMatrix = Eigen::Matrix<double, kErrorStateSize, kErrorStateSize>;
+  using ObservationJacobian3 = Eigen::Matrix<double, 3, kErrorStateSize>;
+  using NoiseInputMatrix = Eigen::Matrix<double, kErrorStateSize, 12>;
+  using ContinuousNoiseMatrix = Eigen::Matrix<double, 12, 12>;
+
+  struct DiscreteErrorModel
+  {
+    ErrorStateMatrix transition{ErrorStateMatrix::Identity()};
+    ErrorStateMatrix process_covariance{ErrorStateMatrix::Zero()};
+  };
+
+  struct Snapshot
+  {
+    State state{};
+    ErrorStateMatrix covariance{ErrorStateMatrix::Identity()};
+    double previous_time_imu{0.0};
+    bool has_previous_time_imu{false};
+    Eigen::Vector3d previous_gyro_measurement{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d previous_accel_measurement{Eigen::Vector3d::Zero()};
+    bool has_previous_imu_measurement{false};
+    bool gyro_bias_learning_enabled{true};
+    bool accel_bias_learning_enabled{true};
+  };
+
+  static Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d & value)
+  {
+    Eigen::Matrix3d result;
+    result <<
+      0.0, -value.z(), value.y(),
+      value.z(), 0.0, -value.x(),
+      -value.y(), value.x(), 0.0;
+    return result;
+  }
+
+  static Eigen::Matrix3d rightJacobianSO3(const Eigen::Vector3d & rotation_vector)
+  {
+    const double angle = rotation_vector.norm();
+    const Eigen::Matrix3d skew = skewSymmetric(rotation_vector);
+    if (angle < 1.0e-5) {
+      return Eigen::Matrix3d::Identity() - 0.5 * skew + (1.0 / 6.0) * skew * skew;
+    }
+    const double angle_squared = angle * angle;
+    return Eigen::Matrix3d::Identity() -
+           ((1.0 - std::cos(angle)) / angle_squared) * skew +
+           ((angle - std::sin(angle)) / (angle_squared * angle)) * skew * skew;
+  }
+
+  static ErrorStateMatrix continuousErrorStateJacobian(
+    const State & state,
+    const Eigen::Vector3d & gyro,
+    const Eigen::Vector3d & linear_acceleration,
+    const double tau_gyro_bias,
+    const double tau_accel_bias)
+  {
+    const Eigen::Quaterniond orientation = state.orientation.normalized();
+    const Eigen::Matrix3d world_from_body = orientation.toRotationMatrix();
+    const Eigen::Vector3d corrected_gyro = gyro - state.gyro_bias;
+    const Eigen::Vector3d corrected_accel = linear_acceleration - state.accel_bias;
+    ErrorStateMatrix result = ErrorStateMatrix::Zero();
+    result.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
+    result.block<3, 3>(3, 6) = -world_from_body * skewSymmetric(corrected_accel);
+    result.block<3, 3>(3, 12) = -world_from_body;
+    result.block<3, 3>(6, 6) = -skewSymmetric(corrected_gyro);
+    result.block<3, 3>(6, 9) = -Eigen::Matrix3d::Identity();
+    if (tau_gyro_bias > 0.0 && std::isfinite(tau_gyro_bias)) {
+      result.block<3, 3>(9, 9) =
+        (-1.0 / tau_gyro_bias) * Eigen::Matrix3d::Identity();
+    }
+    if (tau_accel_bias > 0.0 && std::isfinite(tau_accel_bias)) {
+      result.block<3, 3>(12, 12) =
+        (-1.0 / tau_accel_bias) * Eigen::Matrix3d::Identity();
+    }
+    return result;
+  }
+
+  static ErrorStateMatrix secondOrderErrorStateTransition(
+    const ErrorStateMatrix & continuous_jacobian, const double dt)
+  {
+    const ErrorStateMatrix scaled = continuous_jacobian * dt;
+    return ErrorStateMatrix::Identity() + scaled + 0.5 * scaled * scaled;
+  }
+
+  static NoiseInputMatrix continuousNoiseInputJacobian(const State & state)
+  {
+    const Eigen::Matrix3d world_from_body =
+      state.orientation.normalized().toRotationMatrix();
+    NoiseInputMatrix result = NoiseInputMatrix::Zero();
+    result.block<3, 3>(3, 0) = -world_from_body;
+    result.block<3, 3>(6, 3) = -Eigen::Matrix3d::Identity();
+    result.block<3, 3>(9, 6) = Eigen::Matrix3d::Identity();
+    result.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity();
+    return result;
+  }
+
+  static ContinuousNoiseMatrix continuousNoiseCovariance(
+    const double accelerometer_noise_density,
+    const double gyroscope_noise_density,
+    const double gyro_bias_driving_noise,
+    const double accel_bias_driving_noise)
+  {
+    ContinuousNoiseMatrix result = ContinuousNoiseMatrix::Zero();
+    result.block<3, 3>(0, 0) =
+      accelerometer_noise_density * Eigen::Matrix3d::Identity();
+    result.block<3, 3>(3, 3) =
+      gyroscope_noise_density * Eigen::Matrix3d::Identity();
+    result.block<3, 3>(6, 6) =
+      gyro_bias_driving_noise * Eigen::Matrix3d::Identity();
+    result.block<3, 3>(9, 9) =
+      accel_bias_driving_noise * Eigen::Matrix3d::Identity();
+    return result;
+  }
+
+  static DiscreteErrorModel exactDiscretizeErrorModel(
+    const ErrorStateMatrix & continuous_jacobian,
+    const ErrorStateMatrix & continuous_error_noise_covariance,
+    const double dt)
+  {
+    using VanLoanMatrix = Eigen::Matrix<double, 2 * kErrorStateSize, 2 * kErrorStateSize>;
+    VanLoanMatrix generator = VanLoanMatrix::Zero();
+    generator.block<kErrorStateSize, kErrorStateSize>(0, 0) = continuous_jacobian;
+    generator.block<kErrorStateSize, kErrorStateSize>(0, kErrorStateSize) =
+      continuous_error_noise_covariance;
+    generator.block<kErrorStateSize, kErrorStateSize>(kErrorStateSize, kErrorStateSize) =
+      -continuous_jacobian.transpose();
+    const VanLoanMatrix exponential = (generator * dt).exp();
+    DiscreteErrorModel result;
+    result.transition = exponential.block<kErrorStateSize, kErrorStateSize>(0, 0);
+    result.process_covariance =
+      exponential.block<kErrorStateSize, kErrorStateSize>(0, kErrorStateSize) *
+      result.transition.transpose();
+    result.process_covariance =
+      0.5 * (result.process_covariance + result.process_covariance.transpose());
+    return result;
+  }
+
+  static Eigen::Vector3d positionObservation(
+    const State & state, ObservationJacobian3 * jacobian = nullptr)
+  {
+    if (jacobian != nullptr) {
+      jacobian->setZero();
+      jacobian->template block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+    }
+    return state.position;
+  }
+
+  static Eigen::Vector3d leverArmPositionObservation(
+    const State & state, const Eigen::Vector3d & lever_arm_body,
+    ObservationJacobian3 * jacobian = nullptr)
+  {
+    const Eigen::Matrix3d world_from_body = state.orientation.normalized().toRotationMatrix();
+    if (jacobian != nullptr) {
+      jacobian->setZero();
+      jacobian->template block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+      jacobian->template block<3, 3>(0, 6) =
+        -world_from_body * skewSymmetric(lever_arm_body);
+    }
+    return state.position + world_from_body * lever_arm_body;
+  }
+
+  static Eigen::Vector3d worldVelocityObservation(
+    const State & state, ObservationJacobian3 * jacobian = nullptr)
+  {
+    if (jacobian != nullptr) {
+      jacobian->setZero();
+      jacobian->template block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
+    }
+    return state.velocity;
+  }
+
+  static double yawObservation(
+    const State & state,
+    Eigen::Matrix<double, 1, kErrorStateSize> * jacobian = nullptr)
+  {
+    const Eigen::Matrix3d rotation = state.orientation.normalized().toRotationMatrix();
+    const double x = rotation(0, 0);
+    const double y = rotation(1, 0);
+    const double denominator = x * x + y * y;
+    if (jacobian != nullptr) {
+      jacobian->setZero();
+      if (denominator > 1.0e-12) {
+        (*jacobian)(0, 7) = (-x * rotation(1, 2) + y * rotation(0, 2)) /
+          denominator;
+        (*jacobian)(0, 8) = (x * rotation(1, 1) - y * rotation(0, 1)) /
+          denominator;
+      } else {
+        jacobian->setConstant(std::numeric_limits<double>::quiet_NaN());
+      }
+    }
+    return std::atan2(y, x);
+  }
+
+  static Eigen::Vector3d bodyVelocityObservation(
+    const State & state, ObservationJacobian3 * jacobian = nullptr)
+  {
+    const Eigen::Matrix3d body_from_world =
+      state.orientation.normalized().toRotationMatrix().transpose();
+    const Eigen::Vector3d body_velocity = body_from_world * state.velocity;
+    if (jacobian != nullptr) {
+      jacobian->setZero();
+      jacobian->template block<3, 3>(0, 3) = body_from_world;
+      jacobian->template block<3, 3>(0, 6) = skewSymmetric(body_velocity);
+    }
+    return body_velocity;
+  }
+
+  static Eigen::Vector3d gyroBiasObservation(
+    const State & state, ObservationJacobian3 * jacobian = nullptr)
+  {
+    if (jacobian != nullptr) {
+      jacobian->setZero();
+      jacobian->template block<3, 3>(0, 9) = Eigen::Matrix3d::Identity();
+    }
+    return state.gyro_bias;
+  }
+
+  static ObservationJacobian3 orientationObservationJacobian()
+  {
+    ObservationJacobian3 result = ObservationJacobian3::Zero();
+    result.block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
+    return result;
+  }
 
   static double computeRobustVarianceScale(
     const double normalized_residual,
@@ -118,6 +388,7 @@ public:
     use_continuous_process_noise_density_{false},
     use_second_order_state_transition_{false},
     use_second_order_process_noise_{false},
+    propagation_model_{PropagationModel::kLegacy},
     max_prediction_dt_sec_{0.5},
     initial_gyro_bias_covariance_{0.0},
     initial_accel_bias_covariance_{0.0},
@@ -180,6 +451,9 @@ public:
     const Eigen::Vector3d & linear_acceleration
   )
   {
+    if (!std::isfinite(dt_imu) || !gyro.allFinite() || !linear_acceleration.allFinite()) {
+      return PredictionUpdateStatus::kInvalidInput;
+    }
     if (dt_imu <= 0.0) {
       return PredictionUpdateStatus::kNonPositiveDt;
     }
@@ -187,9 +461,22 @@ public:
       return PredictionUpdateStatus::kDtTooLarge;
     }
 
+    const Eigen::Matrix<double, num_state_, 1> state_before = x_;
+    const EigenMatrixErrorState covariance_before = P_;
+    Eigen::Vector3d integration_gyro = gyro;
+    Eigen::Vector3d integration_acceleration = linear_acceleration;
+    if (propagation_model_ != PropagationModel::kLegacy) {
+      if (has_previous_imu_measurement_) {
+        integration_gyro = 0.5 * (previous_gyro_measurement_ + gyro);
+        integration_acceleration = 0.5 * (previous_accel_measurement_ + linear_acceleration);
+      }
+      previous_gyro_measurement_ = gyro;
+      previous_accel_measurement_ = linear_acceleration;
+      has_previous_imu_measurement_ = true;
+    }
     const Eigen::Vector3d gyro_bias = x_.segment(STATE::BGX, 3);
     const Eigen::Vector3d accel_bias = x_.segment(STATE::BAX, 3);
-    const Eigen::Vector3d unbiased_gyro = gyro - gyro_bias;
+    const Eigen::Vector3d unbiased_gyro = integration_gyro - gyro_bias;
 
     // Integrate angular velocity using the exponential map.
     const Eigen::Vector3d wdt = unbiased_gyro * dt_imu;
@@ -199,15 +486,24 @@ public:
       Eigen::Quaterniond(Eigen::AngleAxisd(wdt_norm, wdt / wdt_norm)) :
       Eigen::Quaterniond::Identity();
     const Eigen::Vector3d acc = Eigen::Vector3d(
-      linear_acceleration.x(),
-      linear_acceleration.y(),
-      linear_acceleration.z());
+      integration_acceleration.x(),
+      integration_acceleration.y(),
+      integration_acceleration.z());
     const Eigen::Vector3d unbiased_acc = acc - accel_bias;
 
     // state
     Eigen::Quaterniond previous_quat(x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
     previous_quat.normalize();
-    const Eigen::Matrix3d rot_mat = previous_quat.toRotationMatrix();
+    const Eigen::Quaterniond half_rotation = wdt_norm > 0.0 ?
+      Eigen::Quaterniond(Eigen::AngleAxisd(0.5 * wdt_norm, wdt / wdt_norm)) :
+      Eigen::Quaterniond::Identity();
+    const Eigen::Quaterniond acceleration_orientation =
+      propagation_model_ == PropagationModel::kLegacy ? previous_quat :
+      (previous_quat * half_rotation).normalized();
+    const Eigen::Matrix3d rot_mat = acceleration_orientation.toRotationMatrix();
+    const State linearization_state{
+      x_.segment(STATE::X, 3), x_.segment(STATE::VX, 3), acceleration_orientation,
+      gyro_bias, accel_bias};
 
     // pos
     x_.segment(STATE::X, 3) = x_.segment(STATE::X, 3) + dt_imu * x_.segment(STATE::VX, 3) +
@@ -241,23 +537,20 @@ public:
       unbiased_gyro(2), 0, -unbiased_gyro(0),
       -unbiased_gyro(1), unbiased_gyro(0), 0;
     EigenMatrixErrorState F = EigenMatrixErrorState::Identity();
-    EigenMatrixErrorState Fc = EigenMatrixErrorState::Zero();
-    if (use_second_order_state_transition_) {
-      Fc.block<3, 3>(ERROR_STATE::DX, ERROR_STATE::DVX) = Eigen::Matrix3d::Identity();
-      Fc.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DTHX) = rot_mat * (-acc_skew);
-      Fc.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DBAX) = -rot_mat;
-      Fc.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DTHX) = -gyro_skew;
-      Fc.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DBGX) = -Eigen::Matrix3d::Identity();
-      if (tau_gyro_bias_ > 0.0 && std::isfinite(tau_gyro_bias_)) {
-        Fc.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX) =
-          (-1.0 / tau_gyro_bias_) * Eigen::Matrix3d::Identity();
-      }
-      if (tau_acc_bias_ > 0.0 && std::isfinite(tau_acc_bias_)) {
-        Fc.block<3, 3>(ERROR_STATE::DBAX, ERROR_STATE::DBAX) =
-          (-1.0 / tau_acc_bias_) * Eigen::Matrix3d::Identity();
-      }
-      const EigenMatrixErrorState Fc_dt = Fc * dt_imu;
-      F += Fc_dt + 0.5 * Fc_dt * Fc_dt;
+    const EigenMatrixErrorState Fc = continuousErrorStateJacobian(
+      linearization_state, integration_gyro, integration_acceleration,
+      tau_gyro_bias_, tau_acc_bias_);
+    DiscreteErrorModel exact_model;
+    if (propagation_model_ == PropagationModel::kExact) {
+      const NoiseInputMatrix exact_noise_input =
+        continuousNoiseInputJacobian(linearization_state);
+      const ContinuousNoiseMatrix exact_continuous_noise = continuousNoiseCovariance(
+        var_imu_acc_, var_imu_w_, var_imu_gyro_bias_, var_imu_acc_bias_);
+      exact_model = exactDiscretizeErrorModel(
+        Fc, exact_noise_input * exact_continuous_noise * exact_noise_input.transpose(), dt_imu);
+      F = exact_model.transition;
+    } else if (use_second_order_state_transition_) {
+      F = secondOrderErrorStateTransition(Fc, dt_imu);
     } else {
       F.block<3, 3>(ERROR_STATE::DX, ERROR_STATE::DVX) =
         dt_imu * Eigen::Matrix3d::Identity();
@@ -300,7 +593,9 @@ public:
     L.block<3, 3>(ERROR_STATE::DBAX, 9) = Eigen::Matrix3d::Identity();
 
     EigenMatrixErrorState discrete_process_noise;
-    if (use_continuous_process_noise_density_ && use_second_order_process_noise_) {
+    if (propagation_model_ == PropagationModel::kExact) {
+      discrete_process_noise = exact_model.process_covariance;
+    } else if (use_continuous_process_noise_density_ && use_second_order_process_noise_) {
       Eigen::Matrix<double, 12, 12> Qc = Eigen::Matrix<double, 12, 12>::Zero();
       Qc.block<3, 3>(0, 0) = var_imu_acc_ * Eigen::Matrix3d::Identity();
       Qc.block<3, 3>(3, 3) = var_imu_w_ * Eigen::Matrix3d::Identity();
@@ -320,6 +615,11 @@ public:
     }
     P_ = F * P_ * F.transpose() + discrete_process_noise;
     P_ = 0.5 * (P_ + P_.transpose());
+    if (!checkNumericalInvariants()) {
+      x_ = state_before;
+      P_ = covariance_before;
+      return PredictionUpdateStatus::kNumericalFailure;
+    }
     return PredictionUpdateStatus::kUpdated;
   }
 
@@ -327,6 +627,19 @@ public:
   {
     previous_time_imu_ = 0.0;
     has_previous_time_imu_ = false;
+    has_previous_imu_measurement_ = false;
+  }
+
+  bool primeImuMeasurement(
+    const Eigen::Vector3d & gyro, const Eigen::Vector3d & linear_acceleration)
+  {
+    if (!gyro.allFinite() || !linear_acceleration.allFinite()) {
+      return false;
+    }
+    previous_gyro_measurement_ = gyro;
+    previous_accel_measurement_ = linear_acceleration;
+    has_previous_imu_measurement_ = true;
+    return true;
   }
 
   // Backward-compatible API: orientation observation update without status.
@@ -377,19 +690,16 @@ public:
     R(1, 1) = variance_rpy_rad2.y();
     R(2, 2) = variance_rpy_rad2.z();
 
-    Eigen::Matrix<double, 3, num_error_state_> H =
-      Eigen::Matrix<double, 3, num_error_state_>::Zero();
-    H.block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
+    const ObservationJacobian3 H = orientationObservationJacobian();
 
-    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
-    const Eigen::Matrix<double, num_error_state_, 3> K = P_ * H.transpose() * S.inverse();
+    Eigen::Matrix<double, num_error_state_, 3> K;
+    if (!computeKalmanGain(H, R, K)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     const Eigen::Matrix<double, num_error_state_, 1> dx = K * innov;
-
-    applyErrorState(dx);
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
+    if (!finishObservationUpdate(dx, K, H, R)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -406,6 +716,104 @@ public:
 *
 * P_k = (I - KH)*P_{k-1}
 */
+  ObservationUpdateDiagnostics3 observationUpdatePositionWithCovariance(
+    const Eigen::Vector3d & measured_position,
+    const Eigen::Matrix3d & measurement_covariance,
+    const double max_nis = 0.0)
+  {
+    ObservationJacobian3 jacobian;
+    const Eigen::Vector3d predicted = positionObservation(getState(), &jacobian);
+    return performObservationUpdate3(
+      measured_position, predicted, jacobian, measurement_covariance, max_nis);
+  }
+
+  ObservationUpdateDiagnostics3 observationUpdateLeverArmPositionWithCovariance(
+    const Eigen::Vector3d & measured_antenna_position,
+    const Eigen::Vector3d & antenna_lever_arm_body,
+    const Eigen::Matrix3d & measurement_covariance,
+    const double max_nis = 0.0)
+  {
+    if (!antenna_lever_arm_body.allFinite()) {
+      return ObservationUpdateDiagnostics3{};
+    }
+    ObservationJacobian3 jacobian;
+    const Eigen::Vector3d predicted = leverArmPositionObservation(
+      getState(), antenna_lever_arm_body, &jacobian);
+    return performObservationUpdate3(
+      measured_antenna_position, predicted, jacobian, measurement_covariance, max_nis);
+  }
+
+  ObservationUpdateDiagnostics3 observationUpdateWorldVelocityWithCovariance(
+    const Eigen::Vector3d & measured_velocity,
+    const Eigen::Matrix3d & measurement_covariance,
+    const double max_nis = 0.0)
+  {
+    ObservationJacobian3 jacobian;
+    const Eigen::Vector3d predicted = worldVelocityObservation(getState(), &jacobian);
+    return performObservationUpdate3(
+      measured_velocity, predicted, jacobian, measurement_covariance, max_nis);
+  }
+
+  ObservationUpdateDiagnostics1 observationUpdateYawWithVariance(
+    const double measured_yaw_rad, const double measurement_variance,
+    const double max_nis = 0.0)
+  {
+    ObservationUpdateDiagnostics1 diagnostics;
+    if (!std::isfinite(measured_yaw_rad) || !std::isfinite(measurement_variance) ||
+      !(measurement_variance > 0.0) || !std::isfinite(max_nis))
+    {
+      if (std::isfinite(measured_yaw_rad)) {
+        diagnostics.status = ObservationUpdateStatus::kInvalidVariance;
+        diagnostics.reason = ObservationRejectReason::kInvalidCovariance;
+      }
+      return diagnostics;
+    }
+    Eigen::Matrix<double, 1, num_error_state_> jacobian;
+    const double predicted = yawObservation(getState(), &jacobian);
+    if (!std::isfinite(predicted) || !jacobian.allFinite()) {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kNumericalInvariant;
+      return diagnostics;
+    }
+    diagnostics.innovation = std::atan2(
+      std::sin(measured_yaw_rad - predicted), std::cos(measured_yaw_rad - predicted));
+    diagnostics.innovation_variance =
+      (jacobian * P_ * jacobian.transpose())(0, 0) + measurement_variance;
+    if (!(diagnostics.innovation_variance > 0.0) ||
+      !std::isfinite(diagnostics.innovation_variance))
+    {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kInnovationNotPositiveDefinite;
+      return diagnostics;
+    }
+    diagnostics.nis = diagnostics.innovation * diagnostics.innovation /
+      diagnostics.innovation_variance;
+    if (max_nis > 0.0 && diagnostics.nis > max_nis) {
+      diagnostics.status = ObservationUpdateStatus::kUpdated;
+      diagnostics.reason = ObservationRejectReason::kNisGate;
+      return diagnostics;
+    }
+    Eigen::Matrix<double, 1, 1> covariance;
+    covariance(0, 0) = measurement_variance;
+    Eigen::Matrix<double, num_error_state_, 1> gain;
+    if (!computeKalmanGain(jacobian, covariance, gain)) {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kNumericalInvariant;
+      return diagnostics;
+    }
+    const Eigen::Matrix<double, num_error_state_, 1> error_update =
+      gain * diagnostics.innovation;
+    if (!finishObservationUpdate(error_update, gain, jacobian, covariance)) {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kNumericalInvariant;
+      return diagnostics;
+    }
+    diagnostics.status = ObservationUpdateStatus::kUpdated;
+    diagnostics.reason = ObservationRejectReason::kNone;
+    diagnostics.accepted = true;
+    return diagnostics;
+  }
+
   void observationUpdate(
     const Eigen::Vector3d & y,
     const Eigen::Vector3d & variance
@@ -419,33 +827,7 @@ public:
     const Eigen::Vector3d & variance
   )
   {
-    if (!y.allFinite()) {
-      return ObservationUpdateStatus::kInvalidMeasurement;
-    }
-    if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
-      return ObservationUpdateStatus::kInvalidVariance;
-    }
-
-    // error state
-    Eigen::Matrix3d R;
-    R <<
-      variance.x(), 0, 0,
-      0, variance.y(), 0,
-      0, 0, variance.z();
-    Eigen::Matrix<double, 3, num_error_state_> H =
-      Eigen::Matrix<double, 3, num_error_state_>::Zero();
-    H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
-    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
-    const Eigen::Matrix<double, num_error_state_, 3> K = P_ * H.transpose() * S.inverse();
-    const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - x_.segment(STATE::X, 3));
-
-    applyErrorState(dx);
-
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
-    return ObservationUpdateStatus::kUpdated;
+    return observationUpdatePositionWithCovariance(y, variance.asDiagonal()).status;
   }
 
   ObservationUpdateStatus observationUpdatePositionWithLeverArmWithStatus(
@@ -453,40 +835,8 @@ public:
     const Eigen::Vector3d & antenna_lever_arm_body,
     const Eigen::Vector3d & variance)
   {
-    if (!antenna_position_world.allFinite() || !antenna_lever_arm_body.allFinite()) {
-      return ObservationUpdateStatus::kInvalidMeasurement;
-    }
-    if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
-      return ObservationUpdateStatus::kInvalidVariance;
-    }
-    Eigen::Quaterniond orientation(
-      x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
-    orientation.normalize();
-    const Eigen::Matrix3d world_from_body = orientation.toRotationMatrix();
-    const Eigen::Vector3d predicted_antenna =
-      x_.segment(STATE::X, 3) + world_from_body * antenna_lever_arm_body;
-    Eigen::Matrix3d lever_arm_skew;
-    lever_arm_skew <<
-      0.0, -antenna_lever_arm_body.z(), antenna_lever_arm_body.y(),
-      antenna_lever_arm_body.z(), 0.0, -antenna_lever_arm_body.x(),
-      -antenna_lever_arm_body.y(), antenna_lever_arm_body.x(), 0.0;
-
-    Eigen::Matrix<double, 3, num_error_state_> H =
-      Eigen::Matrix<double, 3, num_error_state_>::Zero();
-    H.block<3, 3>(0, ERROR_STATE::DX) = Eigen::Matrix3d::Identity();
-    H.block<3, 3>(0, ERROR_STATE::DTHX) = -world_from_body * lever_arm_skew;
-    const Eigen::Matrix3d R = variance.asDiagonal();
-    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
-    const Eigen::Matrix<double, num_error_state_, 3> K =
-      P_ * H.transpose() * S.inverse();
-    const Eigen::Matrix<double, num_error_state_, 1> dx =
-      K * (antenna_position_world - predicted_antenna);
-    applyErrorState(dx);
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
-    return ObservationUpdateStatus::kUpdated;
+    return observationUpdateLeverArmPositionWithCovariance(
+      antenna_position_world, antenna_lever_arm_body, variance.asDiagonal()).status;
   }
 
   ObservationUpdateStatus observationUpdateGyroBiasWithStatus(
@@ -499,20 +849,18 @@ public:
     if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
       return ObservationUpdateStatus::kInvalidVariance;
     }
-    Eigen::Matrix<double, 3, num_error_state_> H =
-      Eigen::Matrix<double, 3, num_error_state_>::Zero();
-    H.block<3, 3>(0, ERROR_STATE::DBGX) = Eigen::Matrix3d::Identity();
+    ObservationJacobian3 H;
+    const Eigen::Vector3d predicted_bias = gyroBiasObservation(getState(), &H);
     const Eigen::Matrix3d R = variance.asDiagonal();
-    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
-    const Eigen::Matrix<double, num_error_state_, 3> K =
-      P_ * H.transpose() * S.inverse();
+    Eigen::Matrix<double, num_error_state_, 3> K;
+    if (!computeKalmanGain(H, R, K)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     const Eigen::Matrix<double, num_error_state_, 1> dx =
-      K * (measured_stationary_gyro - x_.segment(STATE::BGX, 3));
-    applyErrorState(dx);
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
+      K * (measured_stationary_gyro - predicted_bias);
+    if (!finishObservationUpdate(dx, K, H, R)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -536,6 +884,9 @@ public:
     if (!variance.allFinite() || (variance.array() <= 0.0).any()) {
       return ObservationUpdateStatus::kInvalidVariance;
     }
+    if (propagate_cross_state) {
+      return observationUpdateWorldVelocityWithCovariance(y, variance.asDiagonal()).status;
+    }
 
     Eigen::Matrix3d R;
     R <<
@@ -543,27 +894,28 @@ public:
       0, variance.y(), 0,
       0, 0, variance.z();
 
-    Eigen::Matrix<double, 3, num_error_state_> H =
-      Eigen::Matrix<double, 3, num_error_state_>::Zero();
-    H.block<3, 3>(0, ERROR_STATE::DVX) = Eigen::Matrix3d::Identity();
+    ObservationJacobian3 H;
+    const Eigen::Vector3d predicted_velocity = worldVelocityObservation(getState(), &H);
     Eigen::Matrix<double, num_error_state_, 3> K =
       Eigen::Matrix<double, num_error_state_, 3>::Zero();
 
-    if (propagate_cross_state) {
-      K = P_ * H.transpose() * (H * P_ * H.transpose() + R).inverse();
-    } else {
-      const Eigen::Matrix3d P_vv = P_.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DVX);
-      K.block<3, 3>(ERROR_STATE::DVX, 0) = P_vv * (P_vv + R).inverse();
+    const Eigen::Matrix3d P_vv = P_.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DVX);
+    const Eigen::Matrix3d innovation_covariance = P_vv + R;
+    const Eigen::LDLT<Eigen::Matrix3d> decomposition(innovation_covariance);
+    if (decomposition.info() != Eigen::Success || !decomposition.isPositive()) {
+      return ObservationUpdateStatus::kNumericalFailure;
     }
+    const Eigen::Vector3d absolute_pivots = decomposition.vectorD().cwiseAbs();
+    if (!(absolute_pivots.minCoeff() > 1.0e-12 * absolute_pivots.maxCoeff())) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
+    K.block<3, 3>(ERROR_STATE::DVX, 0) = decomposition.solve(P_vv).transpose();
 
-    const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - x_.segment(STATE::VX, 3));
+    const Eigen::Matrix<double, num_error_state_, 1> dx = K * (y - predicted_velocity);
 
-    applyErrorState(dx);
-
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
+    if (!finishObservationUpdate(dx, K, H, R)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -581,35 +933,22 @@ public:
       return ObservationUpdateStatus::kInvalidVariance;
     }
 
-    Eigen::Quaterniond orientation(
-      x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
-    orientation.normalize();
-    const Eigen::Matrix3d body_from_world = orientation.toRotationMatrix().transpose();
-    const Eigen::Vector3d body_velocity = body_from_world * x_.segment(STATE::VX, 3);
-
-    Eigen::Matrix<double, 2, num_error_state_> H =
-      Eigen::Matrix<double, 2, num_error_state_>::Zero();
-    Eigen::Matrix3d body_velocity_skew;
-    body_velocity_skew <<
-      0.0, -body_velocity.z(), body_velocity.y(),
-      body_velocity.z(), 0.0, -body_velocity.x(),
-      -body_velocity.y(), body_velocity.x(), 0.0;
-    H.block<2, 3>(0, ERROR_STATE::DVX) = body_from_world.block<2, 3>(1, 0);
-    H.block<2, 3>(0, ERROR_STATE::DTHX) = body_velocity_skew.block<2, 3>(1, 0);
+    ObservationJacobian3 full_jacobian;
+    const Eigen::Vector3d body_velocity = bodyVelocityObservation(getState(), &full_jacobian);
+    const Eigen::Matrix<double, 2, num_error_state_> H = full_jacobian.bottomRows<2>();
 
     const Eigen::Matrix2d R = variance.asDiagonal();
-    const Eigen::Matrix2d S = H * P_ * H.transpose() + R;
-    const Eigen::Matrix<double, num_error_state_, 2> K =
-      P_ * H.transpose() * S.inverse();
+    Eigen::Matrix<double, num_error_state_, 2> K;
+    if (!computeKalmanGain(H, R, K)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     const Eigen::Vector2d predicted = body_velocity.tail<2>();
     const Eigen::Matrix<double, num_error_state_, 1> dx =
       K * (lateral_vertical_velocity - predicted);
 
-    applyErrorState(dx);
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
+    if (!finishObservationUpdate(dx, K, H, R)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -628,33 +967,19 @@ public:
       return ObservationUpdateStatus::kInvalidVariance;
     }
 
-    Eigen::Quaterniond orientation(
-      x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
-    orientation.normalize();
-    const Eigen::Matrix3d body_from_world = orientation.toRotationMatrix().transpose();
-    const Eigen::Vector3d predicted = body_from_world * x_.segment(STATE::VX, 3);
-    Eigen::Matrix3d predicted_skew;
-    predicted_skew <<
-      0.0, -predicted.z(), predicted.y(),
-      predicted.z(), 0.0, -predicted.x(),
-      -predicted.y(), predicted.x(), 0.0;
-
-    Eigen::Matrix<double, 3, num_error_state_> H =
-      Eigen::Matrix<double, 3, num_error_state_>::Zero();
-    H.block<3, 3>(0, ERROR_STATE::DVX) = body_from_world;
-    H.block<3, 3>(0, ERROR_STATE::DTHX) = predicted_skew;
+    ObservationJacobian3 H;
+    const Eigen::Vector3d predicted = bodyVelocityObservation(getState(), &H);
     const Eigen::Matrix3d R = variance.asDiagonal();
-    const Eigen::Matrix3d S = H * P_ * H.transpose() + R;
-    const Eigen::Matrix<double, num_error_state_, 3> K =
-      P_ * H.transpose() * S.inverse();
+    Eigen::Matrix<double, num_error_state_, 3> K;
+    if (!computeKalmanGain(H, R, K)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     const Eigen::Matrix<double, num_error_state_, 1> dx =
       K * (measured_body_velocity - predicted);
 
-    applyErrorState(dx);
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + K * R * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
+    if (!finishObservationUpdate(dx, K, H, R)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     return ObservationUpdateStatus::kUpdated;
   }
 
@@ -662,7 +987,8 @@ public:
   // lateral or vertical velocity; those are separate non-holonomic constraints.
   ObservationUpdateStatus observationUpdateBodyForwardSpeedWithStatus(
     const double measured_forward_speed,
-    const double variance)
+    const double variance,
+    const bool propagate_cross_state = false)
   {
     if (!std::isfinite(measured_forward_speed)) {
       return ObservationUpdateStatus::kInvalidMeasurement;
@@ -670,14 +996,24 @@ public:
     if (!(variance > 0.0) || !std::isfinite(variance)) {
       return ObservationUpdateStatus::kInvalidVariance;
     }
-    Eigen::Quaterniond orientation(
-      x_(STATE::QW), x_(STATE::QX), x_(STATE::QY), x_(STATE::QZ));
-    orientation.normalize();
-    const Eigen::Matrix3d body_from_world = orientation.toRotationMatrix().transpose();
-    const Eigen::Vector3d predicted = body_from_world * x_.segment(STATE::VX, 3);
-    Eigen::Matrix<double, 1, num_error_state_> H =
-      Eigen::Matrix<double, 1, num_error_state_>::Zero();
-    H.block<1, 3>(0, ERROR_STATE::DVX) = body_from_world.row(0);
+    ObservationJacobian3 full_jacobian;
+    const Eigen::Vector3d predicted = bodyVelocityObservation(getState(), &full_jacobian);
+    const Eigen::Matrix<double, 1, num_error_state_> H = full_jacobian.topRows<1>();
+    Eigen::Matrix<double, 1, 1> measurement_covariance;
+    measurement_covariance(0, 0) = variance;
+    if (propagate_cross_state) {
+      Eigen::Matrix<double, num_error_state_, 1> gain;
+      if (!computeKalmanGain(H, measurement_covariance, gain)) {
+        return ObservationUpdateStatus::kNumericalFailure;
+      }
+      const Eigen::Matrix<double, num_error_state_, 1> error_update =
+        gain * (measured_forward_speed - predicted.x());
+      return finishObservationUpdate(error_update, gain, H, measurement_covariance) ?
+             ObservationUpdateStatus::kUpdated :
+             ObservationUpdateStatus::kNumericalFailure;
+    }
+    const Eigen::Matrix3d body_from_world =
+      getOrientation().normalized().toRotationMatrix().transpose();
     const Eigen::Matrix2d horizontal_velocity_covariance =
       P_.block<2, 2>(ERROR_STATE::DVX, ERROR_STATE::DVX);
     const Eigen::RowVector2d horizontal_velocity_jacobian =
@@ -692,17 +1028,23 @@ public:
       innovation_variance;
     const Eigen::Matrix<double, num_error_state_, 1> dx =
       K * (measured_forward_speed - predicted.x());
-    applyErrorState(dx);
-    const EigenMatrixErrorState I = EigenMatrixErrorState::Identity();
-    const EigenMatrixErrorState A = I - K * H;
-    P_ = A * P_ * A.transpose() + variance * K * K.transpose();
-    P_ = 0.5 * (P_ + P_.transpose());
+    if (!finishObservationUpdate(dx, K, H, measurement_covariance)) {
+      return ObservationUpdateStatus::kNumericalFailure;
+    }
     return ObservationUpdateStatus::kUpdated;
   }
 
   void setTauGyroBias(const double tau_gyro_bias)
   {
     tau_gyro_bias_ = tau_gyro_bias;
+  }
+
+  void setBiasLearningEnabled(
+    const bool gyro_bias_learning_enabled,
+    const bool accel_bias_learning_enabled)
+  {
+    gyro_bias_learning_enabled_ = gyro_bias_learning_enabled;
+    accel_bias_learning_enabled_ = accel_bias_learning_enabled;
   }
 
   void setVarImuGyroBias(const double var_imu_gyro_bias)
@@ -765,6 +1107,25 @@ public:
     use_second_order_process_noise_ = enabled;
   }
 
+  void setPropagationModel(const PropagationModel model)
+  {
+    propagation_model_ = model;
+    if (model == PropagationModel::kLegacy) {
+      use_continuous_process_noise_density_ = false;
+      use_second_order_state_transition_ = false;
+      use_second_order_process_noise_ = false;
+    } else {
+      use_continuous_process_noise_density_ = true;
+      use_second_order_state_transition_ = true;
+      use_second_order_process_noise_ = true;
+    }
+  }
+
+  PropagationModel getPropagationModel() const
+  {
+    return propagation_model_;
+  }
+
   bool setMaxPredictionDtSec(const double max_prediction_dt_sec)
   {
     if (!(max_prediction_dt_sec > 0.0) || !std::isfinite(max_prediction_dt_sec)) {
@@ -800,6 +1161,30 @@ public:
     }
     x_ = x;
     return true;
+  }
+
+  bool setInitialErrorStateCovariance(
+    const Eigen::Vector3d & position_variance,
+    const Eigen::Vector3d & velocity_variance,
+    const Eigen::Vector3d & attitude_variance,
+    const Eigen::Vector3d & gyro_bias_variance,
+    const Eigen::Vector3d & accel_bias_variance)
+  {
+    const Eigen::Vector3d variances[] = {
+      position_variance, velocity_variance, attitude_variance,
+      gyro_bias_variance, accel_bias_variance};
+    for (const auto & variance : variances) {
+      if (!variance.allFinite() || (variance.array() < 0.0).any()) {
+        return false;
+      }
+    }
+    P_.setZero();
+    P_.block<3, 3>(ERROR_STATE::DX, ERROR_STATE::DX).diagonal() = position_variance;
+    P_.block<3, 3>(ERROR_STATE::DVX, ERROR_STATE::DVX).diagonal() = velocity_variance;
+    P_.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DTHX).diagonal() = attitude_variance;
+    P_.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX).diagonal() = gyro_bias_variance;
+    P_.block<3, 3>(ERROR_STATE::DBAX, ERROR_STATE::DBAX).diagonal() = accel_bias_variance;
+    return checkNumericalInvariants();
   }
 
   void setInitialX(Eigen::VectorXd x)
@@ -845,6 +1230,58 @@ public:
     return state;
   }
 
+  Snapshot getSnapshot() const
+  {
+    Snapshot snapshot;
+    snapshot.state = getState();
+    snapshot.covariance = P_;
+    snapshot.previous_time_imu = previous_time_imu_;
+    snapshot.has_previous_time_imu = has_previous_time_imu_;
+    snapshot.previous_gyro_measurement = previous_gyro_measurement_;
+    snapshot.previous_accel_measurement = previous_accel_measurement_;
+    snapshot.has_previous_imu_measurement = has_previous_imu_measurement_;
+    snapshot.gyro_bias_learning_enabled = gyro_bias_learning_enabled_;
+    snapshot.accel_bias_learning_enabled = accel_bias_learning_enabled_;
+    return snapshot;
+  }
+
+  bool restoreSnapshot(const Snapshot & snapshot)
+  {
+    if (!snapshot.state.position.allFinite() || !snapshot.state.velocity.allFinite() ||
+      !snapshot.state.orientation.coeffs().allFinite() ||
+      !(snapshot.state.orientation.norm() > 0.0) || !snapshot.state.gyro_bias.allFinite() ||
+      !snapshot.state.accel_bias.allFinite() || !snapshot.covariance.allFinite() ||
+      !std::isfinite(snapshot.previous_time_imu) ||
+      !snapshot.previous_gyro_measurement.allFinite() ||
+      !snapshot.previous_accel_measurement.allFinite())
+    {
+      return false;
+    }
+    const Snapshot before = getSnapshot();
+    setState(snapshot.state);
+    P_ = 0.5 * (snapshot.covariance + snapshot.covariance.transpose());
+    previous_time_imu_ = snapshot.previous_time_imu;
+    has_previous_time_imu_ = snapshot.has_previous_time_imu;
+    previous_gyro_measurement_ = snapshot.previous_gyro_measurement;
+    previous_accel_measurement_ = snapshot.previous_accel_measurement;
+    has_previous_imu_measurement_ = snapshot.has_previous_imu_measurement;
+    gyro_bias_learning_enabled_ = snapshot.gyro_bias_learning_enabled;
+    accel_bias_learning_enabled_ = snapshot.accel_bias_learning_enabled;
+    if (!checkNumericalInvariants()) {
+      setState(before.state);
+      P_ = before.covariance;
+      previous_time_imu_ = before.previous_time_imu;
+      has_previous_time_imu_ = before.has_previous_time_imu;
+      previous_gyro_measurement_ = before.previous_gyro_measurement;
+      previous_accel_measurement_ = before.previous_accel_measurement;
+      has_previous_imu_measurement_ = before.has_previous_imu_measurement;
+      gyro_bias_learning_enabled_ = before.gyro_bias_learning_enabled;
+      accel_bias_learning_enabled_ = before.accel_bias_learning_enabled;
+      return false;
+    }
+    return true;
+  }
+
   Eigen::Vector3d getPosition() const
   {
     return x_.segment(STATE::X, 3);
@@ -888,6 +1325,40 @@ public:
   Eigen::MatrixXd getCovariance() const
   {
     return P_;
+  }
+
+  double getQuaternionNormError() const
+  {
+    return std::fabs(getOrientation().norm() - 1.0);
+  }
+
+  double getCovarianceSymmetryError() const
+  {
+    return (P_ - P_.transpose()).cwiseAbs().maxCoeff();
+  }
+
+  double getMinimumCovarianceEigenvalue() const
+  {
+    if (!P_.allFinite()) {
+      return -std::numeric_limits<double>::infinity();
+    }
+    const Eigen::SelfAdjointEigenSolver<EigenMatrixErrorState> solver(
+      0.5 * (P_ + P_.transpose()), Eigen::EigenvaluesOnly);
+    if (solver.info() != Eigen::Success) {
+      return -std::numeric_limits<double>::infinity();
+    }
+    return solver.eigenvalues().minCoeff();
+  }
+
+  bool checkNumericalInvariants(
+    const double quaternion_tolerance = 1.0e-10,
+    const double symmetry_tolerance = 1.0e-10,
+    const double negative_eigenvalue_tolerance = 1.0e-9) const
+  {
+    return x_.allFinite() && P_.allFinite() &&
+           getQuaternionNormError() <= quaternion_tolerance &&
+           getCovarianceSymmetryError() <= symmetry_tolerance &&
+           getMinimumCovarianceEigenvalue() >= -negative_eigenvalue_tolerance;
   }
 
   bool capPositionCovariance(const double max_xy, const double max_z)
@@ -967,6 +1438,167 @@ private:
     DBAX = 12, DBAY = 13, DBAZ = 14,
   };
 
+  ObservationUpdateDiagnostics3 performObservationUpdate3(
+    const Eigen::Vector3d & measured,
+    const Eigen::Vector3d & predicted,
+    const ObservationJacobian3 & jacobian,
+    const Eigen::Matrix3d & measurement_covariance,
+    const double max_nis)
+  {
+    ObservationUpdateDiagnostics3 diagnostics;
+    if (!measured.allFinite() || !predicted.allFinite() || !jacobian.allFinite() ||
+      !std::isfinite(max_nis))
+    {
+      return diagnostics;
+    }
+
+    diagnostics.innovation = measured - predicted;
+    if (!measurement_covariance.allFinite() ||
+      !measurement_covariance.isApprox(measurement_covariance.transpose(), 1.0e-12))
+    {
+      diagnostics.status = ObservationUpdateStatus::kInvalidVariance;
+      diagnostics.reason = ObservationRejectReason::kInvalidCovariance;
+      return diagnostics;
+    }
+    const Eigen::LDLT<Eigen::Matrix3d> covariance_decomposition(measurement_covariance);
+    if (covariance_decomposition.info() != Eigen::Success ||
+      !covariance_decomposition.isPositive())
+    {
+      diagnostics.status = ObservationUpdateStatus::kInvalidVariance;
+      diagnostics.reason = ObservationRejectReason::kInvalidCovariance;
+      return diagnostics;
+    }
+    const Eigen::Vector3d covariance_pivots =
+      covariance_decomposition.vectorD().cwiseAbs();
+    if (!(covariance_pivots.minCoeff() > 1.0e-12 * covariance_pivots.maxCoeff())) {
+      diagnostics.status = ObservationUpdateStatus::kInvalidVariance;
+      diagnostics.reason = ObservationRejectReason::kInvalidCovariance;
+      return diagnostics;
+    }
+
+    diagnostics.innovation_covariance =
+      jacobian * P_ * jacobian.transpose() + measurement_covariance;
+    diagnostics.innovation_covariance = 0.5 *
+      (diagnostics.innovation_covariance + diagnostics.innovation_covariance.transpose());
+    const Eigen::LDLT<Eigen::Matrix3d> innovation_decomposition(
+      diagnostics.innovation_covariance);
+    if (innovation_decomposition.info() != Eigen::Success ||
+      !innovation_decomposition.isPositive())
+    {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kInnovationNotPositiveDefinite;
+      return diagnostics;
+    }
+    const Eigen::Vector3d absolute_pivots = innovation_decomposition.vectorD().cwiseAbs();
+    if (!(absolute_pivots.minCoeff() > 1.0e-12 * absolute_pivots.maxCoeff())) {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kInnovationNotPositiveDefinite;
+      return diagnostics;
+    }
+
+    const Eigen::Vector3d whitened_innovation =
+      innovation_decomposition.solve(diagnostics.innovation);
+    diagnostics.nis = diagnostics.innovation.dot(whitened_innovation);
+    if (innovation_decomposition.info() != Eigen::Success ||
+      !whitened_innovation.allFinite() || !std::isfinite(diagnostics.nis) ||
+      diagnostics.nis < -1.0e-12)
+    {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kNumericalInvariant;
+      return diagnostics;
+    }
+    diagnostics.nis = std::max(0.0, diagnostics.nis);
+    if (max_nis > 0.0 && diagnostics.nis > max_nis) {
+      diagnostics.status = ObservationUpdateStatus::kUpdated;
+      diagnostics.reason = ObservationRejectReason::kNisGate;
+      return diagnostics;
+    }
+
+    const Eigen::Matrix<double, num_error_state_, 3> covariance_times_jacobian =
+      P_ * jacobian.transpose();
+    const Eigen::Matrix<double, num_error_state_, 3> gain =
+      innovation_decomposition.solve(covariance_times_jacobian.transpose()).transpose();
+    if (innovation_decomposition.info() != Eigen::Success || !gain.allFinite()) {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kNumericalInvariant;
+      return diagnostics;
+    }
+    const Eigen::Matrix<double, num_error_state_, 1> error_update =
+      gain * diagnostics.innovation;
+    if (!finishObservationUpdate(
+        error_update, gain, jacobian, measurement_covariance))
+    {
+      diagnostics.status = ObservationUpdateStatus::kNumericalFailure;
+      diagnostics.reason = ObservationRejectReason::kNumericalInvariant;
+      return diagnostics;
+    }
+    diagnostics.status = ObservationUpdateStatus::kUpdated;
+    diagnostics.reason = ObservationRejectReason::kNone;
+    diagnostics.accepted = true;
+    return diagnostics;
+  }
+
+  template<int MeasurementSize>
+  bool computeKalmanGain(
+    const Eigen::Matrix<double, MeasurementSize, num_error_state_> & jacobian,
+    const Eigen::Matrix<double, MeasurementSize, MeasurementSize> & measurement_covariance,
+    Eigen::Matrix<double, num_error_state_, MeasurementSize> & gain) const
+  {
+    const Eigen::Matrix<double, MeasurementSize, MeasurementSize> innovation_covariance =
+      jacobian * P_ * jacobian.transpose() + measurement_covariance;
+    const Eigen::LDLT<Eigen::Matrix<double, MeasurementSize, MeasurementSize>> decomposition(
+      0.5 * (innovation_covariance + innovation_covariance.transpose()));
+    if (decomposition.info() != Eigen::Success || !decomposition.isPositive()) {
+      return false;
+    }
+    const auto absolute_pivots = decomposition.vectorD().cwiseAbs();
+    if (!(absolute_pivots.minCoeff() > 1.0e-12 * absolute_pivots.maxCoeff())) {
+      return false;
+    }
+    const Eigen::Matrix<double, num_error_state_, MeasurementSize> covariance_times_jacobian =
+      P_ * jacobian.transpose();
+    gain = decomposition.solve(covariance_times_jacobian.transpose()).transpose();
+    return decomposition.info() == Eigen::Success && gain.allFinite();
+  }
+
+  template<int MeasurementSize>
+  bool finishObservationUpdate(
+    const Eigen::Matrix<double, num_error_state_, 1> & error_update,
+    const Eigen::Matrix<double, num_error_state_, MeasurementSize> & gain,
+    const Eigen::Matrix<double, MeasurementSize, num_error_state_> & jacobian,
+    const Eigen::Matrix<double, MeasurementSize, MeasurementSize> & measurement_covariance)
+  {
+    const Eigen::Matrix<double, num_state_, 1> state_before = x_;
+    const EigenMatrixErrorState covariance_before = P_;
+    Eigen::Matrix<double, num_error_state_, MeasurementSize> effective_gain = gain;
+    Eigen::Matrix<double, num_error_state_, 1> effective_error_update = error_update;
+    if (!gyro_bias_learning_enabled_) {
+      effective_gain.template block<3, MeasurementSize>(ERROR_STATE::DBGX, 0).setZero();
+      effective_error_update.template segment<3>(ERROR_STATE::DBGX).setZero();
+    }
+    if (!accel_bias_learning_enabled_) {
+      effective_gain.template block<3, MeasurementSize>(ERROR_STATE::DBAX, 0).setZero();
+      effective_error_update.template segment<3>(ERROR_STATE::DBAX).setZero();
+    }
+    const EigenMatrixErrorState identity = EigenMatrixErrorState::Identity();
+    const EigenMatrixErrorState joseph_factor = identity - effective_gain * jacobian;
+    EigenMatrixErrorState updated_covariance =
+      joseph_factor * P_ * joseph_factor.transpose() +
+      effective_gain * measurement_covariance * effective_gain.transpose();
+    applyErrorState(effective_error_update);
+    EigenMatrixErrorState reset_jacobian = EigenMatrixErrorState::Identity();
+    reset_jacobian.block<3, 3>(ERROR_STATE::DTHX, ERROR_STATE::DTHX) =
+      rightJacobianSO3(effective_error_update.segment<3>(ERROR_STATE::DTHX));
+    P_ = reset_jacobian * updated_covariance * reset_jacobian.transpose();
+    P_ = 0.5 * (P_ + P_.transpose());
+    if (!checkNumericalInvariants()) {
+      x_ = state_before;
+      P_ = covariance_before;
+      return false;
+    }
+    return true;
+  }
+
   void applyInitialBiasCovariances()
   {
     P_.block<3, 3>(ERROR_STATE::DBGX, ERROR_STATE::DBGX) =
@@ -987,7 +1619,8 @@ private:
     const double norm = dtheta.norm();
     Eigen::Quaterniond dq;
     if (norm < 1e-12) {
-      dq = Eigen::Quaterniond::Identity();
+      dq = Eigen::Quaterniond(1.0, 0.5 * dtheta.x(), 0.5 * dtheta.y(), 0.5 * dtheta.z());
+      dq.normalize();
     } else {
       dq = Eigen::Quaterniond(
         std::cos(norm / 2),
@@ -1016,9 +1649,15 @@ private:
   bool use_continuous_process_noise_density_;
   bool use_second_order_state_transition_;
   bool use_second_order_process_noise_;
+  PropagationModel propagation_model_;
+  Eigen::Vector3d previous_gyro_measurement_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d previous_accel_measurement_{Eigen::Vector3d::Zero()};
+  bool has_previous_imu_measurement_{false};
   double max_prediction_dt_sec_;
   double initial_gyro_bias_covariance_;
   double initial_accel_bias_covariance_;
+  bool gyro_bias_learning_enabled_{true};
+  bool accel_bias_learning_enabled_{true};
 
   Eigen::Matrix<double, num_state_, 1> x_;
   EigenMatrixErrorState P_;

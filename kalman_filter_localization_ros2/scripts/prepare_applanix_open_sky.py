@@ -119,7 +119,7 @@ def decode_velocity_report(data):
 
 
 def read_source(path):
-    """Read only the two useful topics directly from a sqlite3 rosbag."""
+    """Read Applanix truth and optional vehicle speed directly from sqlite3."""
     try:
         from applanix_msgs.msg import NavigationSolutionGsof49
         from rclpy.serialization import deserialize_message
@@ -129,7 +129,7 @@ def read_source(path):
     connection = sqlite3.connect(path)
     topics = {name: topic_id for topic_id, name in connection.execute(
         'SELECT id, name FROM topics')}
-    missing = {APPLANIX_TOPIC, WHEEL_TOPIC}.difference(topics)
+    missing = {APPLANIX_TOPIC}.difference(topics)
     if missing:
         raise ValueError('input bag is missing topics: {}'.format(', '.join(sorted(missing))))
     applanix = []
@@ -141,13 +141,14 @@ def read_source(path):
         stamp = recorded_stamp * 1.0e-9
         applanix.append((stamp, message))
     wheels = []
-    for recorded_stamp, data in connection.execute(query, (topics[WHEEL_TOPIC],)):
-        unused_header_stamp, longitudinal, lateral, heading_rate = \
-            decode_velocity_report(data)
-        wheels.append((recorded_stamp * 1.0e-9, longitudinal, lateral, heading_rate))
+    if WHEEL_TOPIC in topics:
+        for recorded_stamp, data in connection.execute(query, (topics[WHEEL_TOPIC],)):
+            unused_header_stamp, longitudinal, lateral, heading_rate = \
+                decode_velocity_report(data)
+            wheels.append((recorded_stamp * 1.0e-9, longitudinal, lateral, heading_rate))
     connection.close()
-    if not applanix or not wheels:
-        raise ValueError('input topics contain no samples')
+    if not applanix:
+        raise ValueError('Applanix input topic contains no samples')
     return applanix, wheels
 
 

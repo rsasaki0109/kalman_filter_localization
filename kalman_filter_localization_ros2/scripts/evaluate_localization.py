@@ -141,14 +141,118 @@ def interpolate(samples, stamps, stamp, max_gap):
         yaw)
 
 
+def summarize_error_values(values):
+    """Return stable scalar statistics, or None fields for an empty series."""
+    finite = [value for value in values if math.isfinite(value)]
+    if not finite:
+        return {'samples': 0, 'mean': None, 'median': None, 'rmse': None, 'max': None}
+    return {
+        'samples': len(finite),
+        'mean': statistics.mean(finite),
+        'median': statistics.median(finite),
+        'rmse': math.sqrt(statistics.mean(value * value for value in finite)),
+        'max': max(finite),
+    }
+
+
+def relative_pose_error(matches, time_horizons=(), distance_horizons=()):
+    """Compute translation/yaw RPE at requested elapsed-time and reference-distance horizons."""
+    if len(matches) < 2:
+        return {'time': {}, 'distance': {}}
+    cumulative_distance = [0.0]
+    for before, after in zip(matches, matches[1:]):
+        cumulative_distance.append(cumulative_distance[-1] + math.sqrt(
+            (after['rx'] - before['rx']) ** 2 +
+            (after['ry'] - before['ry']) ** 2 +
+            (after['rz'] - before['rz']) ** 2))
+
+    def metrics(pairs):
+        translation, horizontal, yaw = [], [], []
+        for first, second in pairs:
+            edx = second['ex'] - first['ex']
+            edy = second['ey'] - first['ey']
+            edz = second['ez'] - first['ez']
+            rdx = second['rx'] - first['rx']
+            rdy = second['ry'] - first['ry']
+            rdz = second['rz'] - first['rz']
+            dx, dy, dz = edx - rdx, edy - rdy, edz - rdz
+            translation.append(math.sqrt(dx * dx + dy * dy + dz * dz))
+            horizontal.append(math.hypot(dx, dy))
+            yaw.append(math.degrees(normalize_angle(
+                (second['eyaw'] - first['eyaw']) -
+                (second['ryaw'] - first['ryaw']))))
+        return {
+            'translation_m': summarize_error_values(translation),
+            'horizontal_m': summarize_error_values(horizontal),
+            'yaw_deg': summarize_error_values(yaw),
+        }
+
+    result = {'time': {}, 'distance': {}}
+    stamps = [match['stamp'] for match in matches]
+    for horizon in time_horizons:
+        pairs = []
+        for index, match in enumerate(matches[:-1]):
+            target = match['stamp'] + horizon
+            right = bisect_left(stamps, target, lo=index + 1)
+            if right < len(matches):
+                pairs.append((match, matches[right]))
+        result['time'][str(horizon)] = metrics(pairs)
+    for horizon in distance_horizons:
+        pairs = []
+        for index, match in enumerate(matches[:-1]):
+            target = cumulative_distance[index] + horizon
+            right = bisect_left(cumulative_distance, target, lo=index + 1)
+            if right < len(matches):
+                pairs.append((match, matches[right]))
+        result['distance'][str(horizon)] = metrics(pairs)
+    return result
+
+
+def evaluate_outages(errors, segments, settling_threshold_m=1.0, settling_window_sec=1.0):
+    """Report endpoint drift and post-outage overshoot/settling for named time segments."""
+    result = []
+    for segment in segments or []:
+        start, end = float(segment['start']), float(segment['end'])
+        before = [row for row in errors if row['stamp'] <= start]
+        during = [row for row in errors if start <= row['stamp'] <= end]
+        after = [row for row in errors if row['stamp'] >= end]
+        start_error = before[-1]['error_3d'] if before else None
+        endpoint_error = during[-1]['error_3d'] if during else None
+        overshoot = max((row['error_3d'] for row in after), default=None)
+        settling_time = None
+        for row in after:
+            window_end = row['stamp'] + settling_window_sec
+            window = [candidate for candidate in after
+                      if row['stamp'] <= candidate['stamp'] <= window_end]
+            if window and window[-1]['stamp'] >= window_end and all(
+                    candidate['error_3d'] <= settling_threshold_m for candidate in window):
+                settling_time = row['stamp'] - end
+                break
+        result.append({
+            'name': segment.get('name', 'outage'), 'start': start, 'end': end,
+            'start_error_3d_m': start_error, 'endpoint_error_3d_m': endpoint_error,
+            'endpoint_drift_growth_m': (
+                endpoint_error - start_error
+                if endpoint_error is not None and start_error is not None else None),
+            'reacquisition_overshoot_3d_m': overshoot,
+            'reacquisition_settling_time_sec': settling_time,
+            'settling_threshold_m': settling_threshold_m,
+            'settling_window_sec': settling_window_sec,
+        })
+    return result
+
+
 def evaluate(
         estimates, references, max_gap, time_offset=0.0,
-        align_translation=False, start_stamp=None, end_stamp=None):
+        align_translation=False, start_stamp=None, end_stamp=None,
+        rpe_time_horizons=(), rpe_distance_horizons=(), outage_segments=None,
+        settling_threshold_m=1.0, settling_window_sec=1.0):
     estimates = select_time_range(estimates, start_stamp, end_stamp)
     if not estimates or not references:
         raise ValueError('estimate and reference trajectories must not be empty')
     reference_stamps = [sample.stamp for sample in references]
     errors = []
+    matches = []
     for estimate in estimates:
         reference = interpolate(
             references, reference_stamps, estimate.stamp + time_offset, max_gap)
@@ -166,6 +270,11 @@ def evaluate(
             'yaw_deg': (
                 math.degrees(yaw_error) if math.isfinite(yaw_error)
                 else float('nan')),
+        })
+        matches.append({
+            'stamp': estimate.stamp,
+            'ex': estimate.x, 'ey': estimate.y, 'ez': estimate.z, 'eyaw': estimate.yaw,
+            'rx': reference.x, 'ry': reference.y, 'rz': reference.z, 'ryaw': reference.yaw,
         })
     if not errors:
         raise ValueError('no overlapping samples; check timestamps and --max-reference-gap')
@@ -187,13 +296,32 @@ def evaluate(
         values = [row[key] for row in errors if math.isfinite(row[key])]
         return math.sqrt(sum(value * value for value in values) / len(values)) if values else None
 
+    ape = {
+        'translation_3d_m': summarize_error_values(row['error_3d'] for row in errors),
+        'horizontal_m': summarize_error_values(row['horizontal'] for row in errors),
+        'vertical_m': summarize_error_values(abs(row['dz']) for row in errors),
+        'yaw_deg': summarize_error_values(abs(row['yaw_deg']) for row in errors),
+    }
+    policy = {
+        'alignment': 'median_translation' if align_translation else 'none',
+        'interpolation_tolerance_sec': max_gap,
+        'time_offset_sec': time_offset,
+        'start_stamp': start_stamp,
+        'end_stamp': end_stamp,
+    }
     return {'matched_samples': len(errors), 'estimate_samples': len(estimates),
             'match_ratio': len(errors) / len(estimates),
+            'missing_ratio': 1.0 - len(errors) / len(estimates),
             'duration_sec': errors[-1]['stamp'] - errors[0]['stamp'],
             'translation_alignment_m': alignment,
             'rmse_3d_m': rmse('error_3d'), 'rmse_horizontal_m': rmse('horizontal'),
             'rmse_vertical_m': rmse('dz'), 'yaw_rmse_deg': rmse('yaw_deg'),
-            'max_error_3d_m': max(row['error_3d'] for row in errors)}, errors
+            'max_error_3d_m': max(row['error_3d'] for row in errors),
+            'ape': ape,
+            'rpe': relative_pose_error(matches, rpe_time_horizons, rpe_distance_horizons),
+            'outages': evaluate_outages(
+                errors, outage_segments, settling_threshold_m, settling_window_sec),
+            'evaluation_policy': policy}, errors
 
 
 def write_errors(path, errors):
@@ -221,6 +349,20 @@ def check_thresholds(summary, thresholds):
     return failures
 
 
+def parse_outage_segment(value):
+    """Parse NAME,START,END into a manifest-ready outage definition."""
+    fields = value.split(',')
+    if len(fields) != 3:
+        raise argparse.ArgumentTypeError('outage segment must be NAME,START,END')
+    try:
+        start, end = float(fields[1]), float(fields[2])
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('outage timestamps must be numeric') from error
+    if not math.isfinite(start) or not math.isfinite(end) or start >= end:
+        raise argparse.ArgumentTypeError('outage START must be finite and below END')
+    return {'name': fields[0], 'start': start, 'end': end}
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -237,6 +379,11 @@ def parse_args(argv=None):
         help='remove median XYZ offset before calculating position errors')
     parser.add_argument('--start-stamp', type=float, help='inclusive estimate start timestamp')
     parser.add_argument('--end-stamp', type=float, help='inclusive estimate end timestamp')
+    parser.add_argument('--rpe-time-sec', type=float, action='append', default=[])
+    parser.add_argument('--rpe-distance-m', type=float, action='append', default=[])
+    parser.add_argument('--outage-segment', type=parse_outage_segment, action='append', default=[])
+    parser.add_argument('--settling-threshold-m', type=float, default=1.0)
+    parser.add_argument('--settling-window-sec', type=float, default=1.0)
     parser.add_argument('--output-json')
     parser.add_argument('--output-csv', help='write per-sample errors')
     parser.add_argument('--max-rmse-3d', type=float)
@@ -262,7 +409,9 @@ def main(argv=None):
             estimates, references = read_csv(args.estimate_csv), read_csv(args.reference_csv)
         summary, errors = evaluate(
             estimates, references, args.max_reference_gap, args.time_offset,
-            args.align_translation, args.start_stamp, args.end_stamp)
+            args.align_translation, args.start_stamp, args.end_stamp,
+            args.rpe_time_sec, args.rpe_distance_m, args.outage_segment,
+            args.settling_threshold_m, args.settling_window_sec)
         thresholds = {
             'rmse_3d_m': args.max_rmse_3d,
             'rmse_horizontal_m': args.max_rmse_horizontal,

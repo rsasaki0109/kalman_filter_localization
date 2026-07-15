@@ -28,6 +28,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 # NOTE: Eigen is pulled in transitively via kalman_filter_localization_core.
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -59,7 +60,7 @@ target_include_directories(ekf_localization_component PUBLIC
 # Exported library: use keyword signature so transitive deps propagate.
 target_link_libraries(ekf_localization_component PUBLIC kalman_filter_localization_core::core)
 ament_target_dependencies(ekf_localization_component PUBLIC
-  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
+  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 add_executable(ekf_localization_node
 src/ekf_localization_node.cpp
@@ -69,7 +70,7 @@ target_link_libraries(ekf_localization_node
 ekf_localization_component)
 
 ament_target_dependencies(ekf_localization_node
-  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
+  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 rclcpp_components_register_nodes(ekf_localization_component
   "kalman_filter_localization::EkfLocalizationComponent")
@@ -104,6 +105,12 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
+  scripts/verify_repeatability.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME verify_repeatability
+)
+
+install(PROGRAMS
   scripts/prepare_urbannav_tokyo.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME prepare_urbannav_tokyo
@@ -112,6 +119,23 @@ install(PROGRAMS
   scripts/prepare_applanix_open_sky.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME prepare_applanix_open_sky
+)
+install(PROGRAMS
+  scripts/convert_allan_variance.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME convert_allan_variance
+)
+
+install(PROGRAMS
+  scripts/evaluate_consistency.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME evaluate_consistency
+)
+
+install(PROGRAMS
+  scripts/generate_short_bag_fixture.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME generate_short_bag_fixture
 )
 
 install(TARGETS
@@ -139,6 +163,7 @@ ament_export_dependencies(sensor_msgs)
 ament_export_dependencies(nav_msgs)
 ament_export_dependencies(geometry_msgs)
 ament_export_dependencies(std_msgs)
+ament_export_dependencies(std_srvs)
 ament_export_include_directories(include)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 

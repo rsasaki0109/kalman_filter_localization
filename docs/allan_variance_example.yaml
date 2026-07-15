@@ -1,0 +1,6 @@
+ekf_localization:
+  ros__parameters:
+    var_imu_acc: 0.0025000000000000005
+    var_imu_acc_bias: 1.0e-08
+    var_imu_gyro_bias: 1.0e-08
+    var_imu_w: 0.0004

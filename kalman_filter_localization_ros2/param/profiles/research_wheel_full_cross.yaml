@@ -1,0 +1,4 @@
+/**:
+  ros__parameters:
+    use_wheel_speed: true
+    wheel_speed_propagate_cross_state: true

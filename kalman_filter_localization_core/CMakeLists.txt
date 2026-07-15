@@ -34,11 +34,17 @@ if(BUILD_TESTING)
 
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_ekf_core test/test_ekf_core.cpp)
+  ament_add_gtest(test_eskf_replay test/test_eskf_replay.cpp)
+  ament_add_gtest(test_imu_initializer test/test_imu_initializer.cpp)
   ament_add_gtest(test_odometry_core test/test_odometry_core.cpp)
+  ament_add_gtest(test_vehicle_observability test/test_vehicle_observability.cpp)
   # ament_add_gtest uses the plain target_link_libraries() signature internally,
   # so keep using the plain signature here too (CMake forbids mixing styles).
   target_link_libraries(test_ekf_core ${PROJECT_NAME})
+  target_link_libraries(test_eskf_replay ${PROJECT_NAME})
+  target_link_libraries(test_imu_initializer ${PROJECT_NAME})
   target_link_libraries(test_odometry_core ${PROJECT_NAME})
+  target_link_libraries(test_vehicle_observability ${PROJECT_NAME})
 endif()
 
 ament_export_dependencies(eigen3_cmake_module)
