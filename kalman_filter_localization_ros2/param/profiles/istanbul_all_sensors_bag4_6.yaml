@@ -6,9 +6,16 @@ ekf_localization:
       imu_topic: "/sensing/imu/imu_data"
       odom_topic: "/odom"
       pub_period: 10
+      # Phase 0 regression replay is drained in deterministic sensor-time order.
+      output_publish_mode: "imu"
+      input_qos_depth: 1000
+      input_reorder_window_sec: 2000.0
+      input_reorder_drain_sleep_usec: 500
+      output_qos_depth: 1000
 
-      # Istanbul all-sensors bags publish gravity-compensated acceleration.
-      gravity_mps2: 0.0
+      # The Phase 0 converter restores gravity to the gravity-compensated
+      # Applanix acceleration, yielding standard IMU specific force.
+      gravity_mps2: 9.80665
 
       # Raw-IMU mode: use flat-ground pseudo-observation instead of IMU orientation.
       use_imu_orientation: false

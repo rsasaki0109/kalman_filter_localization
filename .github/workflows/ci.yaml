@@ -1,0 +1,49 @@
+name: localization-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-synthetic-schema:
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          rosdep update
+          rosdep install --from-paths . --ignore-src --rosdistro jazzy -r -y
+      - name: Build and test
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build \
+            --packages-select kalman_filter_localization_core kalman_filter_localization \
+            --cmake-args -DBUILD_TESTING=ON
+          source install/setup.bash
+          colcon test \
+            --packages-select kalman_filter_localization_core kalman_filter_localization \
+            --event-handlers console_direct+
+          colcon test-result --verbose
+      - name: Deterministic short-bag replay smoke
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          python3 kalman_filter_localization_ros2/scripts/generate_short_bag_fixture.py \
+            --bag .data/ci/input_bag --reference-csv .data/ci/reference.csv
+          python3 kalman_filter_localization_ros2/scripts/run_urbannav_ablation.py \
+            --input-bag .data/ci/input_bag \
+            --reference-csv .data/ci/reference.csv \
+            --output-dir .data/ci/results \
+            --base-profile kalman_filter_localization_ros2/param/profiles/istanbul_all_sensors_bag4_6.yaml \
+            --profiles-dir kalman_filter_localization_ros2/param/profiles \
+            --profile baseline --rate 10 --startup-delay 1 \
+            --drain-timeout-sec 30 --require-complete-input
+          python3 kalman_filter_localization_ros2/scripts/evaluate_localization.py \
+            --estimate-csv .data/ci/results/baseline/estimate.csv \
+            --reference-csv .data/ci/reference.csv \
+            --max-rmse-3d 0.02 --max-yaw-rmse-deg 0.1 --min-match-ratio 0.95

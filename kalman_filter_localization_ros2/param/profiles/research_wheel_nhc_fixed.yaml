@@ -5,6 +5,7 @@ ekf_localization:
     wheel_speed_scale_factor: 1.0
     wheel_speed_use_nonholonomic_constraints: true
     wheel_speed_nhc_only_during_gnss_outage: false
+    wheel_vertical_nhc_gnss_available_variance_scale: 20.0
     wheel_speed_gnss_outage_threshold_sec: 1.0
     estimate_wheel_speed_scale_factor: false
     var_wheel_speed: 0.04

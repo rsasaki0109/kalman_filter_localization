@@ -1,0 +1,18 @@
+{
+  "gyro_white_noise_density": {
+    "value": 0.02,
+    "unit": "rad/s/sqrt(Hz)"
+  },
+  "accel_white_noise_density": {
+    "value": 0.05,
+    "unit": "m/s^2/sqrt(Hz)"
+  },
+  "gyro_bias_random_walk": {
+    "value": 0.0001,
+    "unit": "rad/s^2/sqrt(Hz)"
+  },
+  "accel_bias_random_walk": {
+    "value": 0.0001,
+    "unit": "m/s^3/sqrt(Hz)"
+  }
+}

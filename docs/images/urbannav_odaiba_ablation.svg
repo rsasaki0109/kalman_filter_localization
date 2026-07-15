@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="430" viewBox="0 0 960 430" role="img" aria-labelledby="title desc">
   <title id="title">UrbanNav Odaiba GNSS outage ablation 3D RMSE</title>
-  <desc id="desc">During the 81.8 second GNSS outage, wheel speed with simultaneous non-holonomic constraints reduced 3D RMSE from 657.47 metres to 6.34 metres.</desc>
+  <desc id="desc">During the 81.8 second GNSS outage, wheel speed with simultaneous non-holonomic constraints reduced 3D RMSE from 657.47 metres to 3.15 metres.</desc>
   <rect width="960" height="430" rx="22" fill="#f8fafc"/>
   <text x="48" y="54" font-family="sans-serif" font-size="26" font-weight="700" fill="#0f172a">UrbanNav Odaiba — GNSS outage 3D RMSE</text>
   <text x="48" y="82" font-family="sans-serif" font-size="15" fill="#64748b">81.8 s outage · logarithmic scale · lower is better</text>
@@ -14,12 +14,12 @@
     <text x="807" y="207" fill="#334155" font-weight="700">420.70 m</text>
 
     <text x="48" y="275" fill="#334155">wheel + NHC auto</text>
-    <rect x="190" y="252" width="210" height="32" rx="7" fill="#38bdf8"/>
-    <text x="412" y="275" fill="#0369a1" font-weight="700">8.11 m</text>
+    <rect x="190" y="252" width="179" height="32" rx="7" fill="#38bdf8"/>
+    <text x="381" y="275" fill="#0369a1" font-weight="700">6.03 m</text>
 
     <text x="48" y="343" fill="#0f766e" font-weight="700">wheel + NHC fixed</text>
-    <rect x="190" y="320" width="185" height="32" rx="7" fill="#0d9488"/>
-    <text x="387" y="343" fill="#0f766e" font-weight="700">6.34 m  (−99.0%)</text>
+    <rect x="190" y="320" width="115" height="32" rx="7" fill="#0d9488"/>
+    <text x="317" y="343" fill="#0f766e" font-weight="700">3.15 m  (−99.5%)</text>
   </g>
   <line x1="190" y1="382" x2="840" y2="382" stroke="#cbd5e1" stroke-width="2"/>
   <g font-family="sans-serif" font-size="13" fill="#64748b" text-anchor="middle">

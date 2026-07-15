@@ -1,0 +1,28 @@
+ekf_localization:
+  ros__parameters:
+    propagation_model: "fast"
+    use_continuous_process_noise_density: false
+    use_second_order_state_transition: false
+    use_second_order_process_noise: false
+    enable_measurement_replay: true
+    measurement_history_duration_sec: 0.6
+    max_future_measurement_wait_sec: 5.0
+    input_reorder_window_sec: 0.0
+    use_flat_ground: false
+    use_nonholonomic_constraint: false
+    use_zupt: false
+    use_zihr: false
+    enable_stationary_initialization: true
+    stationary_initialization_window_sec: 0.5
+    stationary_initialization_min_samples: 40
+    stationary_initialization_max_gyro_std_radps: 0.03
+    stationary_initialization_max_accel_std_mps2: 0.3
+    stationary_initialization_max_accel_norm_error_mps2: 0.5
+    initial_position_variance_xy: 0.04
+    initial_position_variance_z: 0.1
+    initial_velocity_variance_xy: 1.0
+    initial_velocity_variance_z: 1.0
+    initial_attitude_variance_rp: 0.05
+    initial_attitude_variance_yaw: 0.1
+    initial_imu_gyro_bias_covariance: 0.0001
+    initial_imu_acc_bias_covariance: 0.01

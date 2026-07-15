@@ -9,6 +9,17 @@ ekf_localization:
       imu_topic: "/sensing/imu/imu_data"
       odom_topic: "/odom"
       pub_period: 10
+      # Dataset regression uses IMU-triggered output so sample count and stamps
+      # do not depend on wall-clock playback speed or timer scheduling.
+      output_publish_mode: "imu"
+      # Preserve every sensor sample during accelerated regression replay.
+      input_qos_depth: 1000
+      # Buffer the complete regression bag, then deterministically order all
+      # measurements by sensor timestamp and fixed topic priority at drain.
+      input_reorder_window_sec: 2000.0
+      # Drain at a recorder-safe rate and retain the complete output burst.
+      input_reorder_drain_sleep_usec: 500
+      output_qos_depth: 1000
 
       gravity_mps2: 9.80665
       use_imu_orientation: false
@@ -34,6 +45,9 @@ ekf_localization:
       propagate_gnss_velocity_cross_state: true
       var_gnss_velocity_xy: 0.25
       var_gnss_velocity_z: 1.0
+      # Preserve the frozen Phase 0 calibrated-prior weighting for regression.
+      gnss_position_velocity_propagate_covariance: false
+      gnss_position_velocity_correlation_scale: 1.0
       min_gnss_velocity_distance_m: 0.2
       max_gnss_velocity_dt_sec: 0.5
       max_gnss_velocity_innovation_mps: 8.0

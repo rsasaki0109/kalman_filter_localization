@@ -8,10 +8,11 @@ ekf_localization:
     var_zupt_velocity: 0.01
     var_zihr_gyro: 0.00001
     initial_imu_gyro_bias_covariance: 0.01
-    use_continuous_process_noise_density: true
-    use_second_order_state_transition: true
-    use_second_order_process_noise: true
-    propagation_model: "fast"
+    # Deprecated flags remain false while the exclusive model selects Van Loan.
+    use_continuous_process_noise_density: false
+    use_second_order_state_transition: false
+    use_second_order_process_noise: false
+    propagation_model: "exact"
     gnss_position_robust_loss: "huber"
     gnss_position_robust_tuning: 2.5
     max_gnss_position_robust_variance_scale: 100.0
