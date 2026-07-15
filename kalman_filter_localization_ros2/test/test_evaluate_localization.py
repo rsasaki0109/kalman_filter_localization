@@ -280,13 +280,19 @@ class EvaluateLocalizationTest(unittest.TestCase):
             input_bag = root / 'input_bag'
             input_bag.mkdir()
             output = root / 'results'
+            repository = {
+                'available': True,
+                'commit': '4' * 40,
+                'working_tree_sha256': '5' * 64,
+            }
             with mock.patch.object(
                     RUNNER_MODULE, 'runtime_artifacts', return_value={
                         'node': {'path': '/installed/node', 'sha256': '1' * 64},
                         'component': {
                             'path': '/installed/component.so', 'sha256': '2' * 64},
                         'runner': {'path': '/installed/runner', 'sha256': '3' * 64},
-                    }):
+                    }), mock.patch.object(
+                        RUNNER_MODULE, 'repository_record', return_value=repository):
                 result = RUNNER_MODULE.main([
                     '--input-bag', str(input_bag),
                     '--reference-csv', str(DATA / 'reference.csv'),
