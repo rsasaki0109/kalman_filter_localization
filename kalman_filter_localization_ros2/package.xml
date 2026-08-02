@@ -25,7 +25,10 @@
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>pluginlib</depend>
   <depend>kalman_filter_localization_core</depend>
+  <depend>kalman_filter_localization_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

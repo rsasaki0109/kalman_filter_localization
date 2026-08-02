@@ -42,6 +42,7 @@
 #include <tf2_ros/transform_listener.h>
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <chrono>
 #include <cmath>
@@ -57,6 +58,7 @@
 #include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/vector3_stamped.hpp>
@@ -64,11 +66,14 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/nav_sat_status.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
 #include <rclcpp/qos.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <pluginlib/class_loader.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -77,7 +82,13 @@
 #include <kalman_filter_localization/core/imu_initializer.hpp>
 #include <kalman_filter_localization/core/measurement_quality.hpp>
 #include <kalman_filter_localization/core/odometry.hpp>
+#include <kalman_filter_localization/core/sensor_fault_monitor.hpp>
+#include <kalman_filter_localization/core/vehicle_model.hpp>
 #include <kalman_filter_localization/core/vehicle_observability.hpp>
+#include <kalman_filter_localization_msgs/msg/estimator_status.hpp>
+#include <kalman_filter_localization_msgs/msg/measurement_quality.hpp>
+#include <kalman_filter_localization_msgs/msg/observability_status.hpp>
+#include <kalman_filter_localization_msgs/msg/replay_timing.hpp>
 
 namespace kalman_filter_localization
 {
@@ -134,6 +145,32 @@ double stampToSec(const builtin_interfaces::msg::Time & stamp)
   return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
 }
 
+Eigen::Matrix3d odometryPositionCovariance(
+  const std::array<double, 36> & pose_covariance,
+  const Eigen::Vector3d & fallback_variance)
+{
+  const Eigen::Matrix3d fallback = fallback_variance.asDiagonal();
+  Eigen::Matrix3d covariance;
+  covariance <<
+    pose_covariance[0], pose_covariance[1], pose_covariance[2],
+    pose_covariance[6], pose_covariance[7], pose_covariance[8],
+    pose_covariance[12], pose_covariance[13], pose_covariance[14];
+  covariance = 0.5 * (covariance + covariance.transpose());
+  if (!covariance.allFinite() || (covariance.diagonal().array() <= 0.0).any()) {
+    return fallback;
+  }
+  const Eigen::LDLT<Eigen::Matrix3d> ldlt(covariance);
+  if (ldlt.info() != Eigen::Success || (ldlt.vectorD().array() <= 0.0).any()) {
+    return fallback;
+  }
+  return covariance;
+}
+
+double positiveCovarianceOrFallback(const double value, const double fallback)
+{
+  return std::isfinite(value) && value > 0.0 ? value : fallback;
+}
+
 bool isValidLatitudeLongitude(double latitude_deg, double longitude_deg)
 {
   return std::isfinite(latitude_deg) && std::isfinite(longitude_deg) &&
@@ -177,6 +214,106 @@ Eigen::Vector3d ecefToEnu(
     -sin_lat0 * cos_lon0 * d.x() - sin_lat0 * sin_lon0 * d.y() + cos_lat0 * d.z(),
     cos_lat0 * cos_lon0 * d.x() + cos_lat0 * sin_lon0 * d.y() + sin_lat0 * d.z());
 }
+
+const char * measurementRejectReasonText(const core::MeasurementRejectReason reason)
+{
+  switch (reason) {
+    case core::MeasurementRejectReason::kNone:
+      return "none";
+    case core::MeasurementRejectReason::kInvalidInput:
+      return "invalid_input";
+    case core::MeasurementRejectReason::kReceiverQuality:
+      return "receiver_quality";
+    case core::MeasurementRejectReason::kInnovationMagnitude:
+      return "innovation_magnitude";
+    case core::MeasurementRejectReason::kNis:
+      return "nis";
+    case core::MeasurementRejectReason::kReacquisitionConsistency:
+      return "reacquisition_consistency";
+    case core::MeasurementRejectReason::kNumericalFailure:
+      return "numerical_failure";
+  }
+  return "unknown";
+}
+
+const char * measurementSourceText(const int source)
+{
+  switch (source) {
+    case 1:
+      return "gnss_position";
+    case 2:
+      return "velocity";
+    case 3:
+      return "course_yaw";
+    case 4:
+      return "odometry";
+    case 5:
+      return "nhc";
+    case 6:
+      return "zupt";
+    case 7:
+      return "zihr";
+    default:
+      return "unknown";
+  }
+}
+
+const char * stationaryStateText(const core::StationaryDetector::State state)
+{
+  switch (state) {
+    case core::StationaryDetector::State::kMoving:
+      return "moving";
+    case core::StationaryDetector::State::kCandidate:
+      return "candidate";
+    case core::StationaryDetector::State::kStationary:
+      return "stationary";
+    case core::StationaryDetector::State::kInvalid:
+      return "invalid";
+  }
+  return "unknown";
+}
+
+const char * slipStateText(const core::SlipTurnDetector::State state)
+{
+  switch (state) {
+    case core::SlipTurnDetector::State::kTrusted:
+      return "trusted";
+    case core::SlipTurnDetector::State::kTurning:
+      return "turning";
+    case core::SlipTurnDetector::State::kSlip:
+      return "slip";
+    case core::SlipTurnDetector::State::kInvalid:
+      return "invalid";
+  }
+  return "unknown";
+}
+
+const char * replayStatusText(const core::EskfReplay::Status status)
+{
+  switch (status) {
+    case core::EskfReplay::Status::kApplied:
+      return "applied";
+    case core::EskfReplay::Status::kInitialized:
+      return "initialized";
+    case core::EskfReplay::Status::kQueuedFuture:
+      return "queued_future";
+    case core::EskfReplay::Status::kTooOld:
+      return "too_old";
+    case core::EskfReplay::Status::kFuture:
+      return "future";
+    case core::EskfReplay::Status::kDuplicate:
+      return "duplicate";
+    case core::EskfReplay::Status::kReverseImu:
+      return "reverse_imu";
+    case core::EskfReplay::Status::kInvalidInput:
+      return "invalid_input";
+    case core::EskfReplay::Status::kUpdateRejected:
+      return "update_rejected";
+    case core::EskfReplay::Status::kNumericalFailure:
+      return "numerical_failure";
+  }
+  return "unknown";
+}
 }  // namespace
 
 struct EkfLocalizationComponent::Impl
@@ -210,6 +347,8 @@ struct EkfLocalizationComponent::Impl
     bool initialized{false};
     bool apply_zupt{false};
     bool apply_zihr{false};
+    bool apply_nhc{false};
+    bool constrain_nhc_vertical{true};
     double nhc_variance_scale{1.0};
     bool learn_gyro_bias{true};
     bool learn_accel_bias{true};
@@ -243,7 +382,9 @@ struct EkfLocalizationComponent::Impl
   : node_(node),
     clock_(RCL_ROS_TIME),
     tfbuffer_(std::make_shared<rclcpp::Clock>(clock_)),
-    listener_(tfbuffer_)
+    listener_(tfbuffer_),
+    vehicle_model_loader_("kalman_filter_localization",
+      "kalman_filter_localization::core::VehicleModel")
   {
   }
 
@@ -304,6 +445,246 @@ struct EkfLocalizationComponent::Impl
     }
     return has_previous_time_imu_ ? previous_time_imu_ :
            std::numeric_limits<double>::quiet_NaN();
+  }
+
+  void publishTypedReplayTiming(
+    const std::uint8_t source, const core::EskfReplay::Status status,
+    const core::EskfReplay::TimingTrace & trace)
+  {
+    if (!typed_replay_timing_pub_) {
+      return;
+    }
+    kalman_filter_localization_msgs::msg::ReplayTiming message;
+    message.header.stamp = node_.now();
+    message.header.frame_id = reference_frame_id_;
+    message.sequence = ++replay_timing_sequence_;
+    message.source_id = source;
+    message.source = measurementSourceText(static_cast<int>(source));
+    message.status = static_cast<std::uint8_t>(status);
+    message.status_text = replayStatusText(status);
+    message.sensor_time = trace.sensor_time;
+    message.arrival_time = trace.arrival_time;
+    message.filter_time_before = trace.filter_time_before;
+    message.apply_time = trace.apply_time;
+    message.applied = status == core::EskfReplay::Status::kApplied ||
+      status == core::EskfReplay::Status::kInitialized;
+    typed_replay_timing_pub_->publish(message);
+  }
+
+  void publishEstimatorStatus()
+  {
+    if (!estimator_status_pub_) {
+      return;
+    }
+    const double filter_time = filterTimeForDebug();
+    const double latest_imu_time = has_latest_imu_stamp_ ?
+      latest_imu_stamp_.seconds() : std::numeric_limits<double>::quiet_NaN();
+    const auto covariance = ekf_.getCovariance();
+    const auto isFresh = [filter_time](
+      const bool has_stamp, const double stamp, const double timeout) {
+        if (!has_stamp || !std::isfinite(filter_time) || !std::isfinite(stamp)) {
+          return false;
+        }
+        const double age = filter_time - stamp;
+        return age >= -0.5 && age <= std::max(0.5, timeout);
+      };
+    const bool gnss_available = !use_gnss_ || isFresh(
+      has_latest_gnss_, latest_gnss_time_, std::max(gnss_doppler_fallback_timeout_sec_, 1.0));
+    const bool wheel_available = !use_wheel_speed_ || isFresh(
+      has_latest_wheel_speed_, latest_wheel_speed_time_, std::max(max_imu_dt_sec_, 1.0));
+    const auto imu_fault_state = sensor_fault_monitor_.state(
+      core::SensorFaultMonitor::Sensor::kImu);
+    const auto gnss_fault_state = sensor_fault_monitor_.state(
+      core::SensorFaultMonitor::Sensor::kGnss);
+    const auto wheel_fault_state = sensor_fault_monitor_.state(
+      core::SensorFaultMonitor::Sensor::kWheel);
+    const auto odom_fault_state = sensor_fault_monitor_.state(
+      core::SensorFaultMonitor::Sensor::kOdom);
+    const bool imu_isolated = imu_fault_state.isolated;
+    const bool gnss_isolated = gnss_fault_state.isolated;
+    const bool wheel_isolated = wheel_fault_state.isolated;
+    const bool odom_isolated = odom_fault_state.isolated;
+    const bool wheel_aid_available = use_wheel_speed_ && !wheel_isolated && wheel_available;
+    const bool odom_aid_available = use_odom_ && !odom_isolated;
+    const bool vehicle_aid_available = wheel_aid_available || odom_aid_available;
+    const bool numerical_ok = ekf_.checkNumericalInvariants();
+    const bool initialized = initial_pose_received_ && has_received_input_ &&
+      (!enable_stationary_initialization_ || stationary_initialization_complete_);
+
+    using StatusMessage = kalman_filter_localization_msgs::msg::EstimatorStatus;
+    StatusMessage message;
+    message.header.stamp = has_latest_imu_stamp_ ? latest_imu_stamp_ : node_.now();
+    message.header.frame_id = reference_frame_id_;
+    message.initialized = initialized;
+    message.stationary =
+      stationary_detector_.state() == core::StationaryDetector::State::kStationary;
+    message.gnss_available = !use_gnss_ || (!gnss_isolated && gnss_available);
+    message.wheel_available = !use_wheel_speed_ || (!wheel_isolated && wheel_available);
+    message.replay_enabled = enable_measurement_replay_;
+    message.numerical_invariant_ok = numerical_ok;
+    message.sensor_fault_isolation_enabled = enable_sensor_fault_isolation_;
+    message.imu_isolated = imu_isolated;
+    message.gnss_isolated = gnss_isolated;
+    message.wheel_isolated = wheel_isolated;
+    message.odom_isolated = odom_isolated;
+    message.filter_time = filter_time;
+    message.latest_imu_time = latest_imu_time;
+    message.input_age_sec = std::isfinite(filter_time) && std::isfinite(latest_imu_time) ?
+      std::max(0.0, filter_time - latest_imu_time) : std::numeric_limits<double>::quiet_NaN();
+    message.position_stddev_m = covariance.rows() >= 3 && covariance.cols() >= 3 ?
+      std::sqrt(std::max(0.0, covariance.block<3, 3>(0, 0).diagonal().maxCoeff())) :
+      std::numeric_limits<double>::quiet_NaN();
+    message.velocity_stddev_mps = covariance.rows() >= 6 && covariance.cols() >= 6 ?
+      std::sqrt(std::max(0.0, covariance.block<3, 3>(3, 3).diagonal().maxCoeff())) :
+      std::numeric_limits<double>::quiet_NaN();
+    message.yaw_stddev_rad = covariance.rows() > 8 && covariance.cols() > 8 ?
+      std::sqrt(std::max(0.0, covariance(8, 8))) : std::numeric_limits<double>::quiet_NaN();
+    message.wheel_scale_factor = wheel_speed_scale_factor_;
+    message.received_imu = received_imu_count_;
+    message.received_gnss = received_gnss_pose_count_ + received_gnss_navsatfix_count_;
+    message.received_gnss_velocity = received_gnss_doppler_count_;
+    message.received_wheel = received_wheel_count_;
+    message.received_odom = received_odom_count_;
+    message.published_pose = published_pose_count_;
+    message.accepted_measurements = accepted_measurement_count_;
+    message.rejected_measurements = rejected_measurement_count_;
+    message.numerical_failures = numerical_failure_count_;
+    message.late_input_count = reorder_late_input_count_;
+    message.buffered_input_count = input_reorder_queue_.size();
+    message.isolated_measurements = isolated_measurement_count_;
+    message.imu_fault_events = imu_fault_state.fault_events;
+    message.gnss_fault_events = gnss_fault_state.fault_events;
+    message.wheel_fault_events = wheel_fault_state.fault_events;
+    message.odom_fault_events = odom_fault_state.fault_events;
+    if (replay_) {
+      message.rewind_count = replay_->counters().rewind_count;
+    }
+
+    if (!initial_pose_received_ || !has_received_input_) {
+      message.health = StatusMessage::HEALTH_UNKNOWN;
+      message.mode = StatusMessage::MODE_UNINITIALIZED;
+      message.health_text = "unknown";
+      message.mode_text = "uninitialized";
+      message.summary = initial_pose_received_ ? "waiting_for_sensor_input" :
+        "waiting_for_initial_pose";
+    } else if (enable_stationary_initialization_ && !stationary_initialization_complete_) {
+      message.health = StatusMessage::HEALTH_DEGRADED;
+      message.mode = StatusMessage::MODE_INITIALIZING;
+      message.health_text = "degraded";
+      message.mode_text = "initializing";
+      message.summary = "waiting_for_stationary_initialization";
+    } else if (imu_isolated) {
+      message.health = StatusMessage::HEALTH_FAULT;
+      message.mode = StatusMessage::MODE_FAULT;
+      message.health_text = "fault";
+      message.mode_text = "fault";
+      message.summary = "imu_sensor_isolated";
+    } else if (!numerical_ok) {
+      message.health = StatusMessage::HEALTH_FAULT;
+      message.mode = StatusMessage::MODE_FAULT;
+      message.health_text = "fault";
+      message.mode_text = "fault";
+      message.summary = "numerical_invariant_failure";
+    } else if (message.stationary) {
+      message.health = StatusMessage::HEALTH_OK;
+      message.mode = StatusMessage::MODE_STATIONARY;
+      message.health_text = "ok";
+      message.mode_text = "stationary";
+      message.summary = "vehicle_stationary";
+    } else if (gnss_position_reacquisition_updates_remaining_ > 0) {
+      message.health = StatusMessage::HEALTH_DEGRADED;
+      message.mode = StatusMessage::MODE_REACQUISITION;
+      message.health_text = "degraded";
+      message.mode_text = "reacquisition";
+      message.summary = "validating_gnss_reacquisition";
+    } else if (use_gnss_ && (gnss_isolated || !gnss_available)) {
+      message.health = vehicle_aid_available ? StatusMessage::HEALTH_DEGRADED :
+        StatusMessage::HEALTH_FAULT;
+      message.mode = StatusMessage::MODE_OUTAGE;
+      message.health_text = message.health == StatusMessage::HEALTH_FAULT ? "fault" : "degraded";
+      message.mode_text = "outage";
+      message.summary = gnss_isolated ? "gnss_sensor_isolated" :
+        (vehicle_aid_available ? "gnss_outage_dead_reckoning" :
+        "gnss_outage_without_vehicle_aid");
+    } else if (use_odom_ && odom_isolated) {
+      message.health = (wheel_aid_available || (use_gnss_ && !gnss_isolated)) ?
+        StatusMessage::HEALTH_DEGRADED :
+        StatusMessage::HEALTH_FAULT;
+      message.mode = StatusMessage::MODE_OUTAGE;
+      message.health_text = message.health == StatusMessage::HEALTH_FAULT ? "fault" : "degraded";
+      message.mode_text = "outage";
+      message.summary = "odom_sensor_isolated";
+    } else if (use_wheel_speed_) {
+      message.health = wheel_available && !wheel_isolated ? StatusMessage::HEALTH_OK :
+        StatusMessage::HEALTH_DEGRADED;
+      message.mode = StatusMessage::MODE_URBAN;
+      message.health_text = wheel_available && !wheel_isolated ? "ok" : "degraded";
+      message.mode_text = "urban";
+      message.summary = wheel_isolated ? "wheel_sensor_isolated" :
+        (wheel_available ? "gnss_and_wheel_fusion" : "wheel_input_stale");
+    } else {
+      message.health = StatusMessage::HEALTH_OK;
+      message.mode = StatusMessage::MODE_OPEN_SKY;
+      message.health_text = "ok";
+      message.mode_text = "open_sky";
+      message.summary = "gnss_imu_fusion";
+    }
+    estimator_status_pub_->publish(message);
+
+    if (diagnostics_pub_) {
+      diagnostic_msgs::msg::DiagnosticArray diagnostics;
+      diagnostics.header = message.header;
+      diagnostic_msgs::msg::DiagnosticStatus diagnostic;
+      diagnostic.name = node_.get_fully_qualified_name() + std::string(": estimator");
+      diagnostic.hardware_id = "kalman_filter_localization";
+      diagnostic.level = message.health == StatusMessage::HEALTH_OK ?
+        diagnostic_msgs::msg::DiagnosticStatus::OK :
+        (message.health == StatusMessage::HEALTH_FAULT ?
+        diagnostic_msgs::msg::DiagnosticStatus::ERROR :
+        diagnostic_msgs::msg::DiagnosticStatus::WARN);
+      diagnostic.message = message.summary;
+      const auto addKeyValue = [&diagnostic](const std::string & key, const std::string & value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = value;
+          diagnostic.values.push_back(item);
+        };
+      addKeyValue("health", message.health_text);
+      addKeyValue("mode", message.mode_text);
+      addKeyValue("gnss_available", message.gnss_available ? "true" : "false");
+      addKeyValue("wheel_available", message.wheel_available ? "true" : "false");
+      addKeyValue("sensor_fault_isolation_enabled",
+        message.sensor_fault_isolation_enabled ? "true" : "false");
+      addKeyValue("imu_isolated", message.imu_isolated ? "true" : "false");
+      addKeyValue("gnss_isolated", message.gnss_isolated ? "true" : "false");
+      addKeyValue("wheel_isolated", message.wheel_isolated ? "true" : "false");
+      addKeyValue("odom_isolated", message.odom_isolated ? "true" : "false");
+      addKeyValue("replay_enabled", message.replay_enabled ? "true" : "false");
+      addKeyValue("accepted_measurements", std::to_string(message.accepted_measurements));
+      addKeyValue("rejected_measurements", std::to_string(message.rejected_measurements));
+      addKeyValue("numerical_failures", std::to_string(message.numerical_failures));
+      addKeyValue("rewinds", std::to_string(message.rewind_count));
+      diagnostics.status.push_back(diagnostic);
+      diagnostics_pub_->publish(diagnostics);
+    }
+  }
+
+  bool sensorInputAllowed(
+    const core::SensorFaultMonitor::Sensor sensor, const double time_sec)
+  {
+    if (!enable_sensor_fault_isolation_ || sensor_fault_monitor_.allows(sensor, time_sec)) {
+      return true;
+    }
+    ++isolated_measurement_count_;
+    return false;
+  }
+
+  void recordSensorOutcome(
+    const core::SensorFaultMonitor::Sensor sensor, const bool healthy, const double time_sec)
+  {
+    if (enable_sensor_fault_isolation_) {
+      sensor_fault_monitor_.observe(sensor, healthy, time_sec);
+    }
   }
 
   void publishInputTiming(
@@ -382,20 +763,29 @@ struct EkfLocalizationComponent::Impl
     drainBufferedInputs(false);
   }
 
-  bool applyConfiguredInitialCovariance()
+  bool applyInitialCovariance(
+    const Eigen::Vector3d & position_variance,
+    const Eigen::Vector3d & attitude_variance)
   {
     return ekf_.setInitialErrorStateCovariance(
+      position_variance,
+      Eigen::Vector3d(
+        initial_velocity_variance_xy_, initial_velocity_variance_xy_,
+        initial_velocity_variance_z_),
+      attitude_variance,
+      Eigen::Vector3d::Constant(initial_imu_gyro_bias_covariance_),
+      Eigen::Vector3d::Constant(initial_imu_acc_bias_covariance_));
+  }
+
+  bool applyConfiguredInitialCovariance()
+  {
+    return applyInitialCovariance(
       Eigen::Vector3d(
         initial_position_variance_xy_, initial_position_variance_xy_,
         initial_position_variance_z_),
       Eigen::Vector3d(
-        initial_velocity_variance_xy_, initial_velocity_variance_xy_,
-        initial_velocity_variance_z_),
-      Eigen::Vector3d(
         initial_attitude_variance_rp_, initial_attitude_variance_rp_,
-        initial_attitude_variance_yaw_),
-      Eigen::Vector3d::Constant(initial_imu_gyro_bias_covariance_),
-      Eigen::Vector3d::Constant(initial_imu_acc_bias_covariance_));
+        initial_attitude_variance_yaw_));
   }
 
   void init()
@@ -406,10 +796,14 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("robot_frame_id", robot_frame_id_);
     node_.declare_parameter("initial_pose_topic", node_.get_name() + std::string("/initial_pose"));
     node_.get_parameter("initial_pose_topic", initial_pose_topic_);
+    node_.declare_parameter("initial_pose_covariance_topic", std::string());
+    node_.get_parameter("initial_pose_covariance_topic", initial_pose_covariance_topic_);
     node_.declare_parameter("imu_topic", node_.get_name() + std::string("/imu"));
     node_.get_parameter("imu_topic", imu_topic_);
     node_.declare_parameter("odom_topic", node_.get_name() + std::string("/odom"));
     node_.get_parameter("odom_topic", odom_topic_);
+    node_.declare_parameter("odom_input_mode", "relative");
+    node_.get_parameter("odom_input_mode", odom_input_mode_);
     node_.declare_parameter("gnss_pose_topic", node_.get_name() + std::string("/gnss_pose"));
     node_.get_parameter("gnss_pose_topic", gnss_pose_topic_);
     node_.declare_parameter("gnss_input_type", "pose");
@@ -560,6 +954,9 @@ struct EkfLocalizationComponent::Impl
       "nhc_adaptive_lateral_accel_mps2", nhc_adaptive_lateral_accel_mps2_);
     node_.declare_parameter("max_nhc_variance_scale", 100.0);
     node_.get_parameter("max_nhc_variance_scale", max_nhc_variance_scale_);
+    node_.declare_parameter(
+      "vehicle_model_plugin", "kalman_filter_localization/GroundVehicleModel");
+    node_.get_parameter("vehicle_model_plugin", vehicle_model_plugin_);
     node_.declare_parameter("nhc_slip_wheel_innovation_mps", 1.0);
     node_.get_parameter("nhc_slip_wheel_innovation_mps", nhc_slip_wheel_innovation_mps_);
     node_.declare_parameter("nhc_recovery_samples", 5);
@@ -606,6 +1003,8 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("wheel_scale_max_factor", wheel_scale_max_factor_);
     node_.declare_parameter("wheel_scale_max_sample_age_sec", 0.2);
     node_.get_parameter("wheel_scale_max_sample_age_sec", wheel_scale_max_sample_age_sec_);
+    node_.declare_parameter("wheel_scale_reference", "gnss");
+    node_.get_parameter("wheel_scale_reference", wheel_scale_reference_);
     node_.declare_parameter("var_wheel_speed", 0.04);
     node_.get_parameter("var_wheel_speed", var_wheel_speed_);
     node_.declare_parameter("var_wheel_lateral_velocity", 0.05);
@@ -786,6 +1185,12 @@ struct EkfLocalizationComponent::Impl
     node_.get_parameter("use_gnss", use_gnss_);
     node_.declare_parameter("use_odom", false);
     node_.get_parameter("use_odom", use_odom_);
+    node_.declare_parameter("enable_sensor_fault_isolation", false);
+    node_.get_parameter("enable_sensor_fault_isolation", enable_sensor_fault_isolation_);
+    node_.declare_parameter("sensor_fault_trip_count", 5);
+    node_.get_parameter("sensor_fault_trip_count", sensor_fault_trip_count_);
+    node_.declare_parameter("sensor_fault_hold_sec", 5.0);
+    node_.get_parameter("sensor_fault_hold_sec", sensor_fault_hold_sec_);
     node_.declare_parameter("publish_debug_topics", false);
     node_.get_parameter("publish_debug_topics", publish_debug_topics_);
     node_.declare_parameter("output_stamp_source", "latest_input");
@@ -869,6 +1274,25 @@ struct EkfLocalizationComponent::Impl
         "invalid parameter gnss_input_type='%s'. fallback to default='pose'",
         gnss_input_type_.c_str());
       gnss_input_type_ = "pose";
+    }
+    if (odom_input_mode_ != "relative" && odom_input_mode_ != "absolute") {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter odom_input_mode='%s'. fallback to default='relative'",
+        odom_input_mode_.c_str());
+      odom_input_mode_ = "relative";
+    }
+    if (enable_sensor_fault_isolation_) {
+      core::SensorFaultMonitor::Config sensor_fault_config;
+      sensor_fault_config.trip_count = sensor_fault_trip_count_ > 0 ?
+        static_cast<std::size_t>(sensor_fault_trip_count_) : 0U;
+      sensor_fault_config.hold_sec = sensor_fault_hold_sec_;
+      if (!sensor_fault_monitor_.setConfig(sensor_fault_config)) {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "invalid sensor fault isolation parameters; disabling fault isolation");
+        enable_sensor_fault_isolation_ = false;
+      }
     }
     if (gnss_position_robust_loss_name_ == "huber") {
       gnss_position_robust_loss_ = core::EKFEstimator::RobustLoss::kHuber;
@@ -966,6 +1390,15 @@ struct EkfLocalizationComponent::Impl
     {
       RCLCPP_WARN(node_.get_logger(), "invalid automatic wheel-scale parameters; disabling it");
       estimate_wheel_speed_scale_factor_ = false;
+    }
+    if (wheel_scale_reference_ != "gnss" && wheel_scale_reference_ != "odom" &&
+      wheel_scale_reference_ != "either")
+    {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid wheel_scale_reference='%s'. fallback to 'gnss'",
+        wheel_scale_reference_.c_str());
+      wheel_scale_reference_ = "gnss";
     }
     if (use_zupt_ || use_zihr_) {
       if (!(zupt_max_angular_velocity_radps_ >= 0.0) ||
@@ -1407,14 +1840,33 @@ struct EkfLocalizationComponent::Impl
     stationary_config.max_speed_mps = zupt_max_speed_mps_;
     stationary_config.minimum_duration_sec = zupt_min_stationary_duration_sec_;
     stationary_detector_ = core::StationaryDetector(stationary_config);
-    core::SlipTurnDetector::Config slip_config;
-    slip_config.yaw_rate_threshold_radps = nhc_adaptive_yaw_rate_radps_;
-    slip_config.lateral_acceleration_threshold_mps2 = nhc_adaptive_lateral_accel_mps2_;
-    slip_config.wheel_innovation_threshold_mps = nhc_slip_wheel_innovation_mps_;
-    slip_config.maximum_variance_scale = max_nhc_variance_scale_;
-    slip_config.recovery_samples = nhc_recovery_samples_ > 0 ?
-      static_cast<std::size_t>(nhc_recovery_samples_) : 1U;
-    slip_turn_detector_ = core::SlipTurnDetector(slip_config);
+    try {
+      vehicle_model_ = vehicle_model_loader_.createSharedInstance(vehicle_model_plugin_);
+    } catch (const pluginlib::PluginlibException & exception) {
+      throw std::invalid_argument(
+              std::string("failed to load vehicle_model_plugin='") + vehicle_model_plugin_ +
+              "': " + exception.what());
+    }
+    if (!vehicle_model_) {
+      throw std::invalid_argument("vehicle model plugin returned a null instance");
+    }
+    core::VehicleModelConfig vehicle_model_config;
+    vehicle_model_config.minimum_forward_speed_mps = min_nhc_forward_speed_mps_;
+    vehicle_model_config.yaw_rate_threshold_radps = nhc_adaptive_yaw_rate_radps_;
+    vehicle_model_config.lateral_acceleration_threshold_mps2 =
+      nhc_adaptive_lateral_accel_mps2_;
+    vehicle_model_config.wheel_innovation_threshold_mps = nhc_slip_wheel_innovation_mps_;
+    vehicle_model_config.maximum_variance_scale = max_nhc_variance_scale_;
+    vehicle_model_config.recovery_samples = nhc_recovery_samples_ > 0 ?
+      static_cast<std::uint32_t>(nhc_recovery_samples_) : 1U;
+    if (!vehicle_model_->configure(vehicle_model_config)) {
+      throw std::invalid_argument(
+              std::string("vehicle model plugin rejected configuration: ") +
+              vehicle_model_->name());
+    }
+    RCLCPP_INFO(
+      node_.get_logger(), "vehicle model: plugin='%s' model='%s'",
+      vehicle_model_plugin_.c_str(), vehicle_model_->name().c_str());
     core::GnssReacquisitionGate::Config reacquisition_config;
     reacquisition_config.outage_duration_sec = gnss_position_reacquisition_dt_sec_ > 0.0 ?
       gnss_position_reacquisition_dt_sec_ : 1.0;
@@ -1535,6 +1987,21 @@ struct EkfLocalizationComponent::Impl
       node_.get_name() + std::string("/current_accel_bias");
     current_accel_bias_pub_ =
       node_.create_publisher<geometry_msgs::msg::Vector3Stamped>(output_accel_bias_name, 10);
+    estimator_status_pub_ =
+      node_.create_publisher<kalman_filter_localization_msgs::msg::EstimatorStatus>(
+      node_.get_name() + std::string("/status"), 10);
+    diagnostics_pub_ =
+      node_.create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      node_.get_name() + std::string("/diagnostics"), 10);
+    typed_measurement_quality_pub_ =
+      node_.create_publisher<kalman_filter_localization_msgs::msg::MeasurementQuality>(
+      node_.get_name() + std::string("/debug/measurement_quality_typed"), 50);
+    typed_observability_pub_ =
+      node_.create_publisher<kalman_filter_localization_msgs::msg::ObservabilityStatus>(
+      node_.get_name() + std::string("/debug/observability_typed"), 50);
+    typed_replay_timing_pub_ =
+      node_.create_publisher<kalman_filter_localization_msgs::msg::ReplayTiming>(
+      node_.get_name() + std::string("/debug/replay_timing_typed"), 50);
     if (publish_debug_topics_) {
       const std::string debug_prefix = node_.get_name() + std::string("/debug/");
       debug_gnss_position_pub_ =
@@ -1562,7 +2029,11 @@ struct EkfLocalizationComponent::Impl
 
     // Setup Subscriber
     auto process_initial_pose =
-      [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+      [this](
+      const geometry_msgs::msg::PoseStamped::SharedPtr msg,
+      const bool use_message_covariance,
+      const std::array<double, 3> & position_variance,
+      const std::array<double, 3> & attitude_variance) -> void
       {
         RCLCPP_INFO(node_.get_logger(), "received initial pose");
         initial_pose_received_ = true;
@@ -1580,17 +2051,30 @@ struct EkfLocalizationComponent::Impl
           current_pose_.pose.orientation.y,
           current_pose_.pose.orientation.z);
         ekf_.setState(state);
-        (void)applyConfiguredInitialCovariance();
+        const bool covariance_applied = use_message_covariance ?
+          applyInitialCovariance(
+          Eigen::Vector3d(
+            position_variance[0], position_variance[1], position_variance[2]),
+          Eigen::Vector3d(
+            attitude_variance[0], attitude_variance[1], attitude_variance[2])) :
+          applyConfiguredInitialCovariance();
+        if (!covariance_applied) {
+          RCLCPP_WARN(node_.get_logger(), "initial pose covariance was rejected; using EKF state");
+        }
         stationary_initializer_.reset();
         stationary_detector_.reset();
-        slip_turn_detector_.reset();
+        if (vehicle_model_) {
+          vehicle_model_->reset();
+        }
         gnss_reacquisition_gate_.reset();
         stationary_initialization_complete_ = !enable_stationary_initialization_;
         yaw_initializer_.reset();
         (void)yaw_initializer_.offer(
           core::YawInitializer::Source::kExternalPose,
           getYawRadFromQuaternion(state.orientation.normalized()),
-          std::max(initial_attitude_variance_yaw_, 1.0e-12),
+          std::max(
+            use_message_covariance ? attitude_variance[2] : initial_attitude_variance_yaw_,
+            1.0e-12),
           stampToSec(msg->header.stamp));
         if (std::isfinite(initial_dual_antenna_yaw_rad_)) {
           (void)yaw_initializer_.offer(
@@ -1603,6 +2087,7 @@ struct EkfLocalizationComponent::Impl
         has_previous_time_imu_ = false;
         previous_time_imu_ = 0.0;
         replay_->reset();
+        sensor_fault_monitor_.reset();
 
         // Reset odom baseline too.
         current_pose_odom_ = current_pose_;
@@ -1613,6 +2098,8 @@ struct EkfLocalizationComponent::Impl
         has_course_base_gnss_ = false;
         has_previous_velocity_gnss_ = false;
         has_latest_gnss_doppler_ = false;
+        has_latest_gnss_ = false;
+        latest_gnss_time_ = std::numeric_limits<double>::quiet_NaN();
         has_reacquisition_previous_position_ = false;
         has_stationary_start_time_ = false;
       };
@@ -1623,13 +2110,59 @@ struct EkfLocalizationComponent::Impl
         ++received_initial_pose_count_;
         enqueueInput(
           msg->header.stamp, 0,
-          [process_initial_pose, msg]() {process_initial_pose(msg);});
+          [process_initial_pose, msg]() {
+            process_initial_pose(msg, false, std::array<double, 3>{}, std::array<double, 3>{});
+          });
+      };
+    auto initial_pose_covariance_callback =
+      [this, process_initial_pose](
+      const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) -> void
+      {
+        ++received_initial_pose_count_;
+        enqueueInput(
+          msg->header.stamp, 0,
+          [this, process_initial_pose, msg]() {
+            auto pose = std::make_shared<geometry_msgs::msg::PoseStamped>();
+            pose->header = msg->header;
+            pose->pose = msg->pose.pose;
+            const std::array<double, 3> position_variance = {
+              positiveCovarianceOrFallback(
+                msg->pose.covariance[0], initial_position_variance_xy_),
+              positiveCovarianceOrFallback(
+                msg->pose.covariance[7], initial_position_variance_xy_),
+              positiveCovarianceOrFallback(
+                msg->pose.covariance[14], initial_position_variance_z_)};
+            const std::array<double, 3> attitude_variance = {
+              positiveCovarianceOrFallback(
+                msg->pose.covariance[21], initial_attitude_variance_rp_),
+              positiveCovarianceOrFallback(
+                msg->pose.covariance[28], initial_attitude_variance_rp_),
+              positiveCovarianceOrFallback(
+                msg->pose.covariance[35], initial_attitude_variance_yaw_)};
+            process_initial_pose(pose, true, position_variance, attitude_variance);
+          });
       };
 
     auto process_imu =
       [this](const sensor_msgs::msg::Imu::SharedPtr msg) -> void
       {
         if (!initial_pose_received_) {
+          return;
+        }
+        const double sensor_time = stampToSec(msg->header.stamp);
+        if (!sensorInputAllowed(core::SensorFaultMonitor::Sensor::kImu, sensor_time)) {
+          return;
+        }
+        if (!std::isfinite(msg->angular_velocity.x) ||
+          !std::isfinite(msg->angular_velocity.y) ||
+          !std::isfinite(msg->angular_velocity.z) ||
+          !std::isfinite(msg->linear_acceleration.x) ||
+          !std::isfinite(msg->linear_acceleration.y) ||
+          !std::isfinite(msg->linear_acceleration.z))
+        {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kImu, false, sensor_time);
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000, "skip IMU sample with non-finite data");
           return;
         }
         sensor_msgs::msg::Imu transformed_msg;
@@ -1692,7 +2225,9 @@ struct EkfLocalizationComponent::Impl
             has_imu_sensor_start_ = true;
           }
           last_imu_sensor_time_ = sensor_time;
-          predictUpdate(transformed_msg);
+          const bool prediction_ok = predictUpdate(transformed_msg);
+          recordSensorOutcome(
+            core::SensorFaultMonitor::Sensor::kImu, prediction_ok, sensor_time);
           const double callback_us = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - callback_start).count();
           imu_callback_total_us_ += callback_us;
@@ -1702,9 +2237,11 @@ struct EkfLocalizationComponent::Impl
             broadcastPose();
           }
         } catch (tf2::TransformException & e) {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kImu, false, sensor_time);
           RCLCPP_ERROR(node_.get_logger(), "%s", e.what());
           return;
         } catch (std::runtime_error & e) {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kImu, false, sensor_time);
           RCLCPP_ERROR(node_.get_logger(), "%s", e.what());
           return;
         }
@@ -1722,6 +2259,49 @@ struct EkfLocalizationComponent::Impl
         if (!initial_pose_received_ || !use_odom_) {
           return;
         }
+        const double sensor_time = stampToSec(msg->header.stamp);
+        if (!sensorInputAllowed(core::SensorFaultMonitor::Sensor::kOdom, sensor_time)) {
+          return;
+        }
+        const auto & position = msg->pose.pose.position;
+        const auto & orientation = msg->pose.pose.orientation;
+        if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+          !std::isfinite(position.z) || !std::isfinite(orientation.x) ||
+          !std::isfinite(orientation.y) || !std::isfinite(orientation.z) ||
+          !std::isfinite(orientation.w))
+        {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kOdom, false, sensor_time);
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000, "skip odometry sample with non-finite pose");
+          return;
+        }
+        if (estimate_wheel_speed_scale_factor_ && wheel_scale_reference_ != "gnss" &&
+          std::isfinite(msg->twist.twist.linear.x))
+        {
+          updateWheelSpeedScaleFactor(
+            std::fabs(msg->twist.twist.linear.x), sensor_time);
+        }
+        if (odom_input_mode_ == "absolute") {
+          geometry_msgs::msg::PoseStamped pose;
+          pose.header = msg->header;
+          pose.pose = msg->pose.pose;
+          const Eigen::Matrix3d covariance = odometryPositionCovariance(
+            msg->pose.covariance, var_odom_);
+          const Eigen::Vector3d position(
+            pose.pose.position.x, pose.pose.position.y, pose.pose.position.z);
+          if (enable_measurement_replay_) {
+            (void)applyReplayMeasurement(
+              msg->header.stamp, 4U,
+              [position, covariance](core::EKFEstimator & estimator) {
+                return estimator.observationUpdatePositionWithCovariance(
+                  position, covariance).status;
+              });
+          } else {
+            measurementUpdate(pose, covariance, false, Eigen::Vector3d::Zero());
+          }
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kOdom, true, sensor_time);
+          return;
+        }
         Eigen::Affine3d affine;
         tf2::fromMsg(msg->pose.pose, affine);
         const Eigen::Matrix4d odom_mat = affine.matrix();
@@ -1729,6 +2309,7 @@ struct EkfLocalizationComponent::Impl
           current_pose_odom_ = current_pose_;
           previous_odom_mat_ = odom_mat;
           has_previous_odom_ = true;
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kOdom, true, sensor_time);
           return;
         }
 
@@ -1757,6 +2338,7 @@ struct EkfLocalizationComponent::Impl
 
         current_pose_odom_ = current_pose_;
         previous_odom_mat_ = odom_mat;
+        recordSensorOutcome(core::SensorFaultMonitor::Sensor::kOdom, true, sensor_time);
       };
     auto odom_callback =
       [this, process_odom](const nav_msgs::msg::Odometry::SharedPtr msg) -> void
@@ -1807,6 +2389,10 @@ struct EkfLocalizationComponent::Impl
         if (!initial_pose_received_ || !use_gnss_ || !use_gnss_doppler_velocity_) {
           return;
         }
+        const double sensor_time = stampToSec(msg->header.stamp);
+        if (!sensorInputAllowed(core::SensorFaultMonitor::Sensor::kGnss, sensor_time)) {
+          return;
+        }
         if (!msg->header.frame_id.empty() && msg->header.frame_id != reference_frame_id_) {
           RCLCPP_WARN_THROTTLE(
             node_.get_logger(), clock_, 5000,
@@ -1820,6 +2406,8 @@ struct EkfLocalizationComponent::Impl
           msg->twist.twist.linear.z);
         latest_gnss_doppler_time_ = stampToSec(msg->header.stamp);
         has_latest_gnss_doppler_ = std::isfinite(latest_gnss_doppler_time_);
+        latest_gnss_time_ = latest_gnss_doppler_time_ + gnss_time_offset_sec_;
+        has_latest_gnss_ = std::isfinite(latest_gnss_time_);
         Eigen::Matrix3d velocity_covariance = var_gnss_velocity_.asDiagonal();
         if (use_gnss_doppler_velocity_covariance_) {
           Eigen::Matrix3d candidate;
@@ -1884,8 +2472,13 @@ struct EkfLocalizationComponent::Impl
         if (!initial_pose_received_ || !use_wheel_speed_) {
           return;
         }
+        const double sensor_time = stampToSec(msg->header.stamp);
+        if (!sensorInputAllowed(core::SensorFaultMonitor::Sensor::kWheel, sensor_time)) {
+          return;
+        }
         const double speed = msg->twist.twist.linear.x * wheel_speed_scale_factor_;
         if (!std::isfinite(speed)) {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kWheel, false, sensor_time);
           RCLCPP_WARN_THROTTLE(
             node_.get_logger(), clock_, 5000, "skip non-finite wheel speed");
           return;
@@ -1903,7 +2496,7 @@ struct EkfLocalizationComponent::Impl
         const double wheel_vertical_variance = var_wheel_vertical_velocity_ *
           (gnss_outage ? 1.0 : wheel_vertical_nhc_gnss_available_variance_scale_);
         if (enable_measurement_replay_) {
-          (void)applyReplayMeasurement(
+          const auto replay_status = applyReplayMeasurement(
             msg->header.stamp, 3U,
             [this, speed, use_wheel_nhc, wheel_vertical_variance](
               core::EKFEstimator & estimator)
@@ -1927,6 +2520,11 @@ struct EkfLocalizationComponent::Impl
                   var_wheel_speed_, var_wheel_lateral_velocity_,
                   wheel_vertical_variance));
             });
+          recordSensorOutcome(
+            core::SensorFaultMonitor::Sensor::kWheel,
+            replay_status == core::EskfReplay::Status::kApplied ||
+            replay_status == core::EskfReplay::Status::kQueuedFuture,
+            sensor_time);
           return;
         }
         const Eigen::Vector3d predicted_body_velocity =
@@ -1934,6 +2532,7 @@ struct EkfLocalizationComponent::Impl
         if (max_wheel_speed_innovation_mps_ > 0.0 &&
           std::fabs(speed - predicted_body_velocity.x()) > max_wheel_speed_innovation_mps_)
         {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kWheel, false, sensor_time);
           RCLCPP_WARN_THROTTLE(
             node_.get_logger(), clock_, 5000,
             "skip wheel-speed innovation: measured=%f predicted=%f", speed,
@@ -1951,8 +2550,11 @@ struct EkfLocalizationComponent::Impl
               var_wheel_speed_, var_wheel_lateral_velocity_, wheel_vertical_variance));
         }
         if (status != core::EKFEstimator::ObservationUpdateStatus::kUpdated) {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kWheel, false, sensor_time);
           RCLCPP_WARN_THROTTLE(
             node_.get_logger(), clock_, 5000, "skip invalid wheel-speed update");
+        } else {
+          recordSensorOutcome(core::SensorFaultMonitor::Sensor::kWheel, true, sensor_time);
         }
       };
     auto wheel_speed_callback =
@@ -1969,6 +2571,16 @@ struct EkfLocalizationComponent::Impl
       node_.create_subscription<geometry_msgs::msg::PoseStamped>(
       initial_pose_topic_, rclcpp::QoS(input_qos_depth_),
       initial_pose_callback);
+    if (!initial_pose_covariance_topic_.empty()) {
+      sub_initial_pose_covariance_ =
+        node_.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        initial_pose_covariance_topic_, rclcpp::QoS(input_qos_depth_),
+        initial_pose_covariance_callback);
+      RCLCPP_INFO(
+        node_.get_logger(),
+        "initial pose covariance input: '%s'",
+        initial_pose_covariance_topic_.c_str());
+    }
     rclcpp::SensorDataQoS imu_qos;
     imu_qos.keep_last(input_qos_depth_);
     sub_imu_ =
@@ -2056,9 +2668,23 @@ struct EkfLocalizationComponent::Impl
                  stationary_state == core::StationaryDetector::State::kStationary;
                plan->apply_zihr = use_zihr_ &&
                  stationary_state == core::StationaryDetector::State::kStationary;
-               const auto slip = slip_turn_detector_.update(
-                 imu_msg.angular_velocity.z, imu_msg.linear_acceleration.y, 0.0);
-               plan->nhc_variance_scale = slip.variance_scale;
+               const Eigen::Vector3d body_velocity =
+                 estimator.getOrientation().normalized().toRotationMatrix().transpose() *
+                 estimator.getVelocity();
+               core::VehicleModelInput vehicle_model_input;
+               vehicle_model_input.time_sec = sensor_time;
+               vehicle_model_input.body_velocity = body_velocity;
+               vehicle_model_input.yaw_rate_radps = imu_msg.angular_velocity.z;
+               vehicle_model_input.lateral_acceleration_mps2 = imu_msg.linear_acceleration.y;
+               const auto vehicle_model_output = vehicle_model_->evaluate(vehicle_model_input);
+               plan->apply_nhc = vehicle_model_output.valid &&
+                 vehicle_model_output.apply_nonholonomic_constraint &&
+                 std::isfinite(vehicle_model_output.nhc_variance_scale) &&
+                 vehicle_model_output.nhc_variance_scale >= 1.0;
+               plan->constrain_nhc_vertical = vehicle_model_output.constrain_vertical_velocity;
+               plan->nhc_variance_scale = plan->apply_nhc ? std::min(
+                 max_nhc_variance_scale_, vehicle_model_output.nhc_variance_scale) :
+                 max_nhc_variance_scale_;
                if (enable_bias_observability_gate_) {
                  const auto bias_decision = core::evaluateBiasObservability(
                    stationary_state == core::StationaryDetector::State::kStationary,
@@ -2100,7 +2726,7 @@ struct EkfLocalizationComponent::Impl
                }
              }
 
-             if (use_nonholonomic_constraint_) {
+             if (use_nonholonomic_constraint_ && plan->apply_nhc) {
                const Eigen::Vector3d body_velocity =
                  estimator.getOrientation().normalized().toRotationMatrix().transpose() *
                  estimator.getVelocity();
@@ -2111,7 +2737,8 @@ struct EkfLocalizationComponent::Impl
                    Eigen::Vector2d::Zero(),
                    Eigen::Vector2d(
                      var_nhc_lateral_velocity_ * plan->nhc_variance_scale,
-                     var_nhc_vertical_velocity_ * plan->nhc_variance_scale));
+                     plan->constrain_nhc_vertical ?
+                     var_nhc_vertical_velocity_ * plan->nhc_variance_scale : 1.0e6));
                  if (status != UpdateStatus::kUpdated) {
                    return status;
                  }
@@ -2152,6 +2779,7 @@ struct EkfLocalizationComponent::Impl
         trace.filter_time_before, trace.apply_time, static_cast<double>(status)};
       debug_replay_timing_pub_->publish(message);
     }
+    publishTypedReplayTiming(source, status, replay_->lastTimingTrace());
     if (status != core::EskfReplay::Status::kApplied &&
       status != core::EskfReplay::Status::kQueuedFuture)
     {
@@ -2164,7 +2792,7 @@ struct EkfLocalizationComponent::Impl
     return status;
   }
 
-  void predictUpdate(const sensor_msgs::msg::Imu & imu_msg)
+  bool predictUpdate(const sensor_msgs::msg::Imu & imu_msg)
   {
     has_received_input_ = true;
     current_stamp_ = imu_msg.header.stamp;
@@ -2232,7 +2860,7 @@ struct EkfLocalizationComponent::Impl
           "stationary initialization rejected IMU sample: status=%d",
           static_cast<int>(initialization_status));
       }
-      return;
+      return !invalid_initialization_sample;
     }
 
     if (enable_measurement_replay_) {
@@ -2246,7 +2874,7 @@ struct EkfLocalizationComponent::Impl
       {
         previous_time_imu_ = current_time_imu;
         has_previous_time_imu_ = true;
-        return;
+        return true;
       }
       if (status == core::EskfReplay::Status::kReverseImu) {
         RCLCPP_WARN_THROTTLE(
@@ -2257,7 +2885,7 @@ struct EkfLocalizationComponent::Impl
           node_.get_logger(), clock_, 5000,
           "skip IMU update rejected by replay engine: status=%d", static_cast<int>(status));
       }
-      return;
+      return false;
     }
 
     if (!has_previous_time_imu_) {
@@ -2272,7 +2900,7 @@ struct EkfLocalizationComponent::Impl
           imu_msg.linear_acceleration.x,
           imu_msg.linear_acceleration.y,
           imu_msg.linear_acceleration.z));
-      return;
+      return true;
     }
     const double dt_imu = current_time_imu - previous_time_imu_;
     // Always advance the time base to allow recovery after large/invalid dt.
@@ -2283,19 +2911,19 @@ struct EkfLocalizationComponent::Impl
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF prediction update due to non-positive IMU dt: %f [sec]", dt_imu);
-      return;
+      return false;
     }
     if (status == core::EKFEstimator::PredictionUpdateStatus::kDtTooLarge) {
       RCLCPP_WARN_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF prediction update due to too large IMU dt: %f [sec]", dt_imu);
-      return;
+      return false;
     }
     if (status != core::EKFEstimator::PredictionUpdateStatus::kUpdated) {
       RCLCPP_ERROR_THROTTLE(
         node_.get_logger(), clock_, 5000,
         "skip EKF prediction update due to invalid input or numerical invariant failure");
-      return;
+      return false;
     }
 
     const auto stationary_state = stationary_detector_.update(
@@ -2380,6 +3008,7 @@ struct EkfLocalizationComponent::Impl
     if (use_zupt_ || use_zihr_) {
       updateZeroVelocity(imu_msg, current_time_imu);
     }
+    return true;
   }
 
   void updateZeroVelocity(const sensor_msgs::msg::Imu & imu_msg, const double time_sec)
@@ -2447,23 +3076,40 @@ struct EkfLocalizationComponent::Impl
       wheel_innovation = latest_raw_wheel_speed_mps_ * wheel_speed_scale_factor_ -
         body_velocity.x();
     }
-    const auto slip_result = slip_turn_detector_.update(
-      imu_msg.angular_velocity.z, imu_msg.linear_acceleration.y, wheel_innovation);
-    const double variance_scale = slip_result.variance_scale;
+    core::VehicleModelInput vehicle_model_input;
+    vehicle_model_input.time_sec = stampToSec(imu_msg.header.stamp);
+    vehicle_model_input.body_velocity = body_velocity;
+    vehicle_model_input.yaw_rate_radps = imu_msg.angular_velocity.z;
+    vehicle_model_input.lateral_acceleration_mps2 = imu_msg.linear_acceleration.y;
+    vehicle_model_input.wheel_innovation_mps = wheel_innovation;
+    vehicle_model_input.has_wheel_innovation = has_latest_wheel_speed_;
+    auto vehicle_model_output = vehicle_model_->evaluate(vehicle_model_input);
+    if (!vehicle_model_output.valid || !vehicle_model_output.apply_nonholonomic_constraint ||
+      !std::isfinite(vehicle_model_output.nhc_variance_scale) ||
+      vehicle_model_output.nhc_variance_scale < 1.0)
+    {
+      return;
+    }
+    vehicle_model_output.nhc_variance_scale = std::min(
+      max_nhc_variance_scale_, vehicle_model_output.nhc_variance_scale);
+    const double variance_scale = vehicle_model_output.nhc_variance_scale;
+    publishTypedObservability(
+      imu_msg.header.stamp, vehicle_model_output, wheel_innovation);
     if (debug_observability_pub_) {
       std_msgs::msg::Float64MultiArray message;
       message.data = {
         stampToSec(imu_msg.header.stamp),
         static_cast<double>(stationary_detector_.state()),
-        static_cast<double>(slip_result.state),
+        static_cast<double>(vehicle_model_output.slip_state),
         variance_scale,
-        slip_result.severity,
+        vehicle_model_output.slip_severity,
         wheel_innovation};
       debug_observability_pub_->publish(message);
     }
     const Eigen::Vector2d variance(
       var_nhc_lateral_velocity_ * variance_scale,
-      var_nhc_vertical_velocity_ * variance_scale);
+      vehicle_model_output.constrain_vertical_velocity ?
+      var_nhc_vertical_velocity_ * variance_scale : 1.0e6);
     const StateSnapshot state_before = captureState();
     const auto status = ekf_.observationUpdateBodyVelocityConstraintWithStatus(
       Eigen::Vector2d::Zero(), variance);
@@ -2585,6 +3231,12 @@ struct EkfLocalizationComponent::Impl
     const Eigen::Matrix3d & position_covariance)
   {
     if (initial_pose_received_ && use_gnss_) {
+      const double sensor_time = stampToSec(pose_msg.header.stamp);
+      if (!sensorInputAllowed(core::SensorFaultMonitor::Sensor::kGnss, sensor_time)) {
+        return;
+      }
+      latest_gnss_time_ = stampToSec(pose_msg.header.stamp) + gnss_time_offset_sec_;
+      has_latest_gnss_ = std::isfinite(latest_gnss_time_);
       geometry_msgs::msg::PoseStamped body_pose_msg = pose_msg;
       const Eigen::Vector3d antenna_position(
         pose_msg.pose.position.x, pose_msg.pose.position.y, pose_msg.pose.position.z);
@@ -2864,8 +3516,37 @@ struct EkfLocalizationComponent::Impl
   void publishMeasurementQuality(
     const builtin_interfaces::msg::Time & stamp, const int source,
     const bool accepted, const core::MeasurementRejectReason reason,
-    const double innovation_magnitude, const double raw_nis, const double used_nis)
+    const double innovation_magnitude, const double raw_nis, const double used_nis,
+    const double variance_scale = 1.0)
   {
+    if (accepted) {
+      ++accepted_measurement_count_;
+    } else {
+      ++rejected_measurement_count_;
+    }
+    if (reason == core::MeasurementRejectReason::kNumericalFailure) {
+      ++numerical_failure_count_;
+    }
+    if (source >= 1 && source <= 3) {
+      recordSensorOutcome(
+        core::SensorFaultMonitor::Sensor::kGnss, accepted, stampToSec(stamp));
+    }
+    if (typed_measurement_quality_pub_) {
+      kalman_filter_localization_msgs::msg::MeasurementQuality typed_message;
+      typed_message.header.stamp = stamp;
+      typed_message.header.frame_id = reference_frame_id_;
+      typed_message.sequence = ++measurement_quality_sequence_;
+      typed_message.source_id = static_cast<std::uint8_t>(std::max(0, source));
+      typed_message.source = measurementSourceText(source);
+      typed_message.accepted = accepted;
+      typed_message.reject_reason = static_cast<std::uint8_t>(reason);
+      typed_message.reject_reason_text = measurementRejectReasonText(reason);
+      typed_message.innovation_magnitude = innovation_magnitude;
+      typed_message.raw_nis = raw_nis;
+      typed_message.used_nis = used_nis;
+      typed_message.variance_scale = variance_scale;
+      typed_measurement_quality_pub_->publish(typed_message);
+    }
     if (!debug_measurement_quality_pub_) {
       return;
     }
@@ -2874,6 +3555,31 @@ struct EkfLocalizationComponent::Impl
       stampToSec(stamp), static_cast<double>(source), accepted ? 1.0 : 0.0,
       static_cast<double>(reason), innovation_magnitude, raw_nis, used_nis};
     debug_measurement_quality_pub_->publish(message);
+  }
+
+  void publishTypedObservability(
+    const builtin_interfaces::msg::Time & stamp,
+    const core::VehicleModelOutput & vehicle_model_output,
+    const double wheel_innovation)
+  {
+    if (!typed_observability_pub_) {
+      return;
+    }
+    kalman_filter_localization_msgs::msg::ObservabilityStatus message;
+    message.header.stamp = stamp;
+    message.header.frame_id = robot_frame_id_;
+    message.stationary_state = static_cast<std::uint8_t>(stationary_detector_.state());
+    message.stationary_state_text = stationaryStateText(stationary_detector_.state());
+    message.vehicle_model = vehicle_model_->name();
+    message.nhc_vertical_constrained = vehicle_model_output.constrain_vertical_velocity;
+    message.slip_state = vehicle_model_output.slip_state;
+    message.slip_state_text = vehicle_model_output.slip_state_text;
+    message.nhc_variance_scale = vehicle_model_output.nhc_variance_scale;
+    message.slip_severity = vehicle_model_output.slip_severity;
+    message.wheel_innovation_mps = wheel_innovation;
+    message.gyro_bias_learning_enabled = ekf_.gyroBiasLearningEnabled();
+    message.accel_bias_learning_enabled = ekf_.accelBiasLearningEnabled();
+    typed_observability_pub_->publish(message);
   }
 
   void publishGnssCourseYawDebug(
@@ -3474,7 +4180,9 @@ struct EkfLocalizationComponent::Impl
       return;
     }
 
-    updateWheelSpeedScaleFactor(velocity_meas.head<2>().norm(), t);
+    if (wheel_scale_reference_ != "odom") {
+      updateWheelSpeedScaleFactor(velocity_meas.head<2>().norm(), t);
+    }
 
     if (use_gnss_velocity_) {
       const Eigen::Matrix3d base_covariance =
@@ -3686,6 +4394,7 @@ struct EkfLocalizationComponent::Impl
   void broadcastPose()
   {
     if (!initial_pose_received_ || !has_received_input_) {
+      publishEstimatorStatus();
       return;
     }
     const auto pose = ekf_.getPose();
@@ -3764,6 +4473,7 @@ struct EkfLocalizationComponent::Impl
     accel_bias_msg.vector.y = state.accel_bias.y();
     accel_bias_msg.vector.z = state.accel_bias.z();
     current_accel_bias_pub_->publish(accel_bias_msg);
+    publishEstimatorStatus();
   }
 
   EkfLocalizationComponent & node_;
@@ -3771,8 +4481,10 @@ struct EkfLocalizationComponent::Impl
   std::string reference_frame_id_;
   std::string robot_frame_id_;
   std::string initial_pose_topic_;
+  std::string initial_pose_covariance_topic_;
   std::string imu_topic_;
   std::string odom_topic_;
+  std::string odom_input_mode_;
   std::string gnss_pose_topic_;
   std::string gnss_input_type_;
   std::string gnss_navsatfix_topic_;
@@ -3839,6 +4551,7 @@ struct EkfLocalizationComponent::Impl
   double nhc_adaptive_yaw_rate_radps_{0.5};
   double nhc_adaptive_lateral_accel_mps2_{1.5};
   double max_nhc_variance_scale_{100.0};
+  std::string vehicle_model_plugin_{"kalman_filter_localization/GroundVehicleModel"};
   double nhc_slip_wheel_innovation_mps_{1.0};
   int nhc_recovery_samples_{5};
   bool use_wheel_speed_{false};
@@ -3857,6 +4570,7 @@ struct EkfLocalizationComponent::Impl
   double wheel_scale_min_factor_{0.8};
   double wheel_scale_max_factor_{1.2};
   double wheel_scale_max_sample_age_sec_{0.2};
+  std::string wheel_scale_reference_{"gnss"};
   std::vector<double> wheel_scale_samples_;
   bool has_latest_wheel_speed_{false};
   double latest_raw_wheel_speed_mps_{0.0};
@@ -3936,6 +4650,9 @@ struct EkfLocalizationComponent::Impl
   Eigen::Vector3d var_odom_{Eigen::Vector3d::Zero()};
   bool use_gnss_{false};
   bool use_odom_{false};
+  bool enable_sensor_fault_isolation_{false};
+  int sensor_fault_trip_count_{5};
+  double sensor_fault_hold_sec_{5.0};
   bool publish_debug_topics_{false};
   std::string output_stamp_source_{"latest_input"};
   std::string output_publish_mode_{"timer"};
@@ -3945,6 +4662,8 @@ struct EkfLocalizationComponent::Impl
   bool initial_pose_received_{false};
   bool has_received_input_{false};
   bool has_latest_imu_stamp_{false};
+  bool has_latest_gnss_{false};
+  double latest_gnss_time_{std::numeric_limits<double>::quiet_NaN()};
 
   std::uint64_t received_initial_pose_count_{0};
   std::uint64_t received_imu_count_{0};
@@ -3954,6 +4673,12 @@ struct EkfLocalizationComponent::Impl
   std::uint64_t received_gnss_doppler_count_{0};
   std::uint64_t received_wheel_count_{0};
   std::uint64_t published_pose_count_{0};
+  std::uint64_t measurement_quality_sequence_{0};
+  std::uint64_t accepted_measurement_count_{0};
+  std::uint64_t rejected_measurement_count_{0};
+  std::uint64_t numerical_failure_count_{0};
+  std::uint64_t isolated_measurement_count_{0};
+  std::uint64_t replay_timing_sequence_{0};
   std::uint64_t imu_callback_count_{0};
   double imu_callback_total_us_{0.0};
   double imu_callback_max_us_{0.0};
@@ -4003,12 +4728,16 @@ struct EkfLocalizationComponent::Impl
   core::ImuStationaryInitializer stationary_initializer_;
   core::YawInitializer yaw_initializer_;
   core::StationaryDetector stationary_detector_;
-  core::SlipTurnDetector slip_turn_detector_;
   core::GnssReacquisitionGate gnss_reacquisition_gate_;
+  core::SensorFaultMonitor sensor_fault_monitor_;
+  pluginlib::ClassLoader<core::VehicleModel> vehicle_model_loader_;
+  std::shared_ptr<core::VehicleModel> vehicle_model_;
   bool stationary_initialization_complete_{false};
   std::unique_ptr<core::EskfReplay> replay_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
+    sub_initial_pose_covariance_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_gnss_pose_;
@@ -4022,6 +4751,15 @@ struct EkfLocalizationComponent::Impl
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr current_odometry_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
+  rclcpp::Publisher<kalman_filter_localization_msgs::msg::EstimatorStatus>::SharedPtr
+    estimator_status_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
+  rclcpp::Publisher<kalman_filter_localization_msgs::msg::MeasurementQuality>::SharedPtr
+    typed_measurement_quality_pub_;
+  rclcpp::Publisher<kalman_filter_localization_msgs::msg::ObservabilityStatus>::SharedPtr
+    typed_observability_pub_;
+  rclcpp::Publisher<kalman_filter_localization_msgs::msg::ReplayTiming>::SharedPtr
+    typed_replay_timing_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_position_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_gnss_course_yaw_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_update_delta_pub_;

@@ -29,12 +29,19 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include <kalman_filter_localization/core/ekf_estimator.hpp>
 #include <kalman_filter_localization/core/measurement_quality.hpp>
+#include <kalman_filter_localization/core/vehicle_model.hpp>
 #include <kalman_filter_localization/core/vehicle_observability.hpp>
 
 using kalman_filter_localization::core::SlipTurnDetector;
 using kalman_filter_localization::core::StationaryDetector;
+using kalman_filter_localization::core::VehicleModelConfig;
+using kalman_filter_localization::core::VehicleModelInput;
+using kalman_filter_localization::core::GroundVehicleModel;
+using kalman_filter_localization::core::PlanarVehicleModel;
 
 TEST(VehicleObservability, StationaryDetectorRequiresContinuousDuration)
 {
@@ -150,4 +157,72 @@ TEST(VehicleObservability, MeasurementQualityUsesCommonRejectReasons)
     MeasurementRejectReason::kInnovationMagnitude);
   EXPECT_EQ(kalman_filter_localization::core::evaluateMeasurementQuality(
       true, 1.0, 11.0, 5.0, 10.0).reason, MeasurementRejectReason::kNis);
+}
+
+TEST(VehicleModel, GroundModelProvidesStablePluginContract)
+{
+  GroundVehicleModel model;
+  VehicleModelConfig config;
+  config.minimum_forward_speed_mps = 0.5;
+  config.wheel_innovation_threshold_mps = 0.5;
+  config.recovery_samples = 2U;
+  ASSERT_TRUE(model.configure(config));
+  EXPECT_EQ(model.name(), "ground_vehicle");
+
+  VehicleModelInput input;
+  input.time_sec = 1.0;
+  input.body_velocity = Eigen::Vector3d(5.0, 0.0, 0.0);
+  input.yaw_rate_radps = 0.05;
+  input.lateral_acceleration_mps2 = 0.1;
+  input.wheel_innovation_mps = 0.1;
+  input.has_wheel_innovation = true;
+  const auto trusted = model.evaluate(input);
+  ASSERT_TRUE(trusted.valid);
+  EXPECT_TRUE(trusted.apply_nonholonomic_constraint);
+  EXPECT_TRUE(trusted.constrain_vertical_velocity);
+  EXPECT_EQ(trusted.slip_state_text, "trusted");
+  EXPECT_DOUBLE_EQ(trusted.nhc_variance_scale, 1.0);
+
+  input.time_sec = 2.0;
+  input.wheel_innovation_mps = 2.0;
+  const auto slip = model.evaluate(input);
+  ASSERT_TRUE(slip.valid);
+  EXPECT_EQ(slip.slip_state_text, "slip");
+  EXPECT_GT(slip.nhc_variance_scale, 1.0);
+
+  input.body_velocity.x() = 0.1;
+  const auto stopped = model.evaluate(input);
+  ASSERT_TRUE(stopped.valid);
+  EXPECT_FALSE(stopped.apply_nonholonomic_constraint);
+}
+
+TEST(VehicleModel, PlanarModelLeavesVerticalMotionUnconstrained)
+{
+  PlanarVehicleModel model;
+  ASSERT_TRUE(model.configure(VehicleModelConfig{}));
+  EXPECT_EQ(model.name(), "planar_vehicle");
+
+  VehicleModelInput input;
+  input.time_sec = 1.0;
+  input.body_velocity = Eigen::Vector3d(2.0, 0.0, 0.2);
+  input.yaw_rate_radps = 0.0;
+  input.lateral_acceleration_mps2 = 0.0;
+  const auto output = model.evaluate(input);
+  ASSERT_TRUE(output.valid);
+  EXPECT_TRUE(output.apply_nonholonomic_constraint);
+  EXPECT_FALSE(output.constrain_vertical_velocity);
+}
+
+TEST(VehicleModel, InvalidInputIsRejectedWithoutStateMutation)
+{
+  GroundVehicleModel model;
+  ASSERT_TRUE(model.configure(VehicleModelConfig{}));
+  VehicleModelInput input;
+  input.time_sec = 1.0;
+  input.body_velocity = Eigen::Vector3d(2.0, 0.0, 0.0);
+  input.yaw_rate_radps = 0.0;
+  input.lateral_acceleration_mps2 = 0.0;
+  input.wheel_innovation_mps = std::numeric_limits<double>::quiet_NaN();
+  input.has_wheel_innovation = true;
+  EXPECT_FALSE(model.evaluate(input).valid);
 }

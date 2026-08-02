@@ -25,6 +25,8 @@ ekf_localization:
       # gnss_navsatfix_origin_altitude: 0.0
       imu_topic: "imu"
       odom_topic: "odom"
+      odom_input_mode: "relative"  # "relative" or absolute robot_localization odometry
+      initial_pose_covariance_topic: ""  # geometry_msgs/PoseWithCovarianceStamped, optional
       input_reorder_window_sec: 0.0
       pub_period: 10
       output_odometry_topic: "/current_odometry"
@@ -65,6 +67,7 @@ ekf_localization:
       nhc_adaptive_yaw_rate_radps: 0.5
       nhc_adaptive_lateral_accel_mps2: 1.5
       max_nhc_variance_scale: 100.0
+      vehicle_model_plugin: "kalman_filter_localization/GroundVehicleModel"
       nhc_slip_wheel_innovation_mps: 1.0
       nhc_recovery_samples: 5
       use_wheel_speed: false
@@ -83,6 +86,7 @@ ekf_localization:
       wheel_scale_min_factor: 0.8
       wheel_scale_max_factor: 1.2
       wheel_scale_max_sample_age_sec: 0.2
+      wheel_scale_reference: "gnss"  # "gnss", "odom", or "either"
       var_wheel_speed: 0.04
       var_wheel_lateral_velocity: 0.05
       var_wheel_vertical_velocity: 0.02
@@ -152,4 +156,7 @@ ekf_localization:
       use_gnss_doppler_course_yaw: false
       min_gnss_doppler_course_speed_mps: 1.0
       use_odom: false
+      enable_sensor_fault_isolation: false
+      sensor_fault_trip_count: 5
+      sensor_fault_hold_sec: 5.0
       publish_debug_topics: false

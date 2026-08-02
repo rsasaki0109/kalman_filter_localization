@@ -1,0 +1,15 @@
+# Starting profile for feeding robot_localization/navsat_transform output into kf_ws.
+# The odometry pose is interpreted as an absolute map-frame position and its
+# position covariance is taken from nav_msgs/Odometry when it is finite/SPD.
+ekf_localization:
+  ros__parameters:
+    reference_frame_id: "map"
+    robot_frame_id: "base_link"
+    imu_topic: "/imu/data"
+    odom_topic: "/odometry/gps"
+    odom_input_mode: "absolute"
+    use_odom: true
+    use_gnss: false
+    enable_sensor_fault_isolation: true
+    initial_pose_covariance_topic: "/initialpose"
+    publish_tf: false

@@ -35,9 +35,44 @@ Main topics:
 | output | `/ekf_localization/current_pose` | `geometry_msgs/PoseStamped` |
 | output | `/ekf_localization/current_odometry` | `nav_msgs/Odometry` |
 
+Health and typed diagnostics are always published:
+
+| Topic | Type | Purpose |
+|---|---|---|
+| `/ekf_localization/status` | `kalman_filter_localization_msgs/EstimatorStatus` | health, mode, freshness, counters, covariance summary |
+| `/ekf_localization/diagnostics` | `diagnostic_msgs/DiagnosticArray` | standard ROS diagnostic status |
+| `/ekf_localization/debug/measurement_quality_typed` | `kalman_filter_localization_msgs/MeasurementQuality` | accepted/rejected measurement and NIS |
+| `/ekf_localization/debug/observability_typed` | `kalman_filter_localization_msgs/ObservabilityStatus` | stationary, turning/slip, NHC scale, bias learning |
+| `/ekf_localization/debug/replay_timing_typed` | `kalman_filter_localization_msgs/ReplayTiming` | sensor/arrival/filter/apply timing |
+
+The legacy `Float64MultiArray` debug topics remain available when
+`publish_debug_topics` is enabled. The typed interfaces are defined in the
+separate [`kalman_filter_localization_msgs`](kalman_filter_localization_msgs)
+package and are intended for monitoring tools and long-term API use. Detailed
+field definitions and health-state transitions are in
+[`docs/diagnostics.md`](docs/diagnostics.md).
+
 See [`ekf.yaml`](kalman_filter_localization_ros2/param/ekf.yaml) for the default
 parameters and [`param/profiles`](kalman_filter_localization_ros2/param/profiles) for
 dataset-specific configurations.
+
+## Configuration diagnosis
+
+Run `kf_doctor` before tuning a new bag. It discovers common GNSS/IMU/wheel/odometry
+topics, checks sensor timestamps, frame IDs, covariance validity, IMU rate and
+stationary-window statistics, then writes a machine-readable report and a
+conservative profile skeleton:
+
+```bash
+ros2 run kalman_filter_localization kf_doctor \
+  --bag input_bag \
+  --output-report .data/doctor/report.json \
+  --output-profile .data/doctor/profile.yaml
+```
+
+The inferred IMU noise values are explicitly heuristic estimates from detected
+stationary samples. Allan variance and the calibration checklist remain the
+authoritative path for production noise parameters.
 
 Select one propagation backend with `propagation_model`:
 
@@ -72,6 +107,49 @@ reports input source, sensor time, arrival time, filter time, and apply time.
 
 `compensate_gnss_delay` is retained only as a deprecated constant-velocity fallback. It is disabled
 automatically when replay is enabled. `gnss_time_offset_sec` also shifts the GNSS replay timestamp.
+
+## robot_localization compatibility
+
+`navsat_transform_node` commonly publishes an absolute `nav_msgs/Odometry` pose on
+`/odometry/gps` and RViz publishes `geometry_msgs/PoseWithCovarianceStamped` on
+`/initialpose`. Use [`robot_localization_compat.yaml`](kalman_filter_localization_ros2/param/profiles/robot_localization_compat.yaml)
+as a starting profile:
+
+```bash
+ros2 run kalman_filter_localization ekf_localization_node \
+  --ros-args --params-file robot_localization_compat.yaml
+```
+
+The default `odom_input_mode: "relative"` preserves the historical kf_ws behavior. Set it to
+`"absolute"` for robot_localization output; the position covariance in `Odometry.pose.covariance`
+is then used when it is finite and positive-definite, with `var_odom_xyz` as the fallback.
+The covariance-bearing initial pose topic uses its x/y/z and roll/pitch/yaw diagonal variances,
+falling back to the configured initial variances when a field is unknown.
+
+## Runtime fault isolation and calibration
+
+For deployment profiles, enable the bounded sensor quarantine:
+
+```yaml
+enable_sensor_fault_isolation: true
+sensor_fault_trip_count: 5
+sensor_fault_hold_sec: 5.0
+```
+
+Consecutive rejected/non-finite IMU, GNSS, wheel, or odometry samples isolate only that sensor.
+The typed status topic reports the isolation flags and fault-event counters; after the hold time,
+one valid probe can restore the sensor. Stationary initialization supplies online startup gyro-bias
+calibration, while `estimate_wheel_speed_scale_factor` estimates a bounded wheel scale from
+GNSS-derived or configured absolute-Odometry body speed during straight, timestamp-aligned motion;
+select the source with `wheel_scale_reference: "gnss"`, `"odom"`, or `"either"`. See
+[`docs/diagnostics.md`](docs/diagnostics.md) for the operational contract.
+
+Vehicle-specific motion constraints use the ROS-free `core::VehicleModel` API
+and pluginlib. The default is
+`kalman_filter_localization/GroundVehicleModel`; use
+`kalman_filter_localization/PlanarVehicleModel` when vertical body motion
+should not be constrained. The selected model and policy are visible in the
+typed observability topic.
 
 ## Evaluation
 

@@ -21,11 +21,13 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           colcon build \
-            --packages-select kalman_filter_localization_core kalman_filter_localization \
+            --packages-select kalman_filter_localization_msgs \
+              kalman_filter_localization_core kalman_filter_localization \
             --cmake-args -DBUILD_TESTING=ON
           source install/setup.bash
           colcon test \
-            --packages-select kalman_filter_localization_core kalman_filter_localization \
+            --packages-select kalman_filter_localization_msgs \
+              kalman_filter_localization_core kalman_filter_localization \
             --event-handlers console_direct+
           colcon test-result --verbose
       - name: Deterministic short-bag replay smoke

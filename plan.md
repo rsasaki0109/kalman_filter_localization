@@ -252,6 +252,28 @@ Phase 0--6 完了後、同じ benchmark で必要性を判定する。
 
 採用条件は、holdout で統計的に有意な改善があり、複雑性・計算量・license の増加を説明できること。
 
+### Phase 8: productization track
+
+Phase 0--6 の数理・評価 gate を維持したまま、実運用での導入時間、異常時の説明可能性、
+ROS 2 互換性を高める。
+
+- [x] `kalman_filter_localization_msgs` に型付き status、measurement quality、observability、
+      replay timing message を追加する。
+- [x] 標準 `diagnostic_msgs/DiagnosticArray` と health/mode/status topic を常時公開する。
+- [x] legacy `Float64MultiArray` debug topic を維持しつつ、typed API の field、状態遷移、
+      移行方針を `docs/diagnostics.md` に定義する。
+- [x] typed message generation、Python field smoke test、実ノード topic smoke test を CI/
+      ローカル検証へ追加する。
+- [x] `kf_doctor` で bag の frame、時刻、QoS、covariance、IMU noise、初期化条件を診断し、
+      machine-readable report と profile skeleton を生成する。
+- [x] robot_localization 互換入力、runtime health mode、sensor fault isolation、online
+      wheel-scale calibration、ground-vehicle observability API を追加する。
+- [x] vehicle-model plugin API と追加の車両固有モデル（ground / planar）を追加し、
+      pluginlibロード、NHC拘束方針、typed observabilityを実ノードで確認する。
+
+Productization の各項目は、既存の open-sky、urban continuous、outage、reacquisition gate を
+悪化させないことを受け入れ条件とする。
+
 ## 5. PR 分割
 
 大きな一括変更を避け、次の順で独立に review 可能にする。

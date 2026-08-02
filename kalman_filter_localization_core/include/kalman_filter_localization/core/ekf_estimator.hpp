@@ -1307,6 +1307,16 @@ public:
     return x_.segment(STATE::BAX, 3);
   }
 
+  bool gyroBiasLearningEnabled() const
+  {
+    return gyro_bias_learning_enabled_;
+  }
+
+  bool accelBiasLearningEnabled() const
+  {
+    return accel_bias_learning_enabled_;
+  }
+
   Eigen::VectorXd getX()
   {
     return x_;

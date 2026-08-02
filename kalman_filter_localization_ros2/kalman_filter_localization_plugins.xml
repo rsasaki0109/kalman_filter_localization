@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<library path="kalman_filter_localization_vehicle_models">
+  <class
+    name="kalman_filter_localization/GroundVehicleModel"
+    type="kalman_filter_localization::GroundVehicleModelPlugin"
+    base_class_type="kalman_filter_localization::core::VehicleModel">
+    <description>
+      Ground vehicle model with wheel-aware slip/turn adaptive NHC.
+    </description>
+  </class>
+  <class
+    name="kalman_filter_localization/PlanarVehicleModel"
+    type="kalman_filter_localization::PlanarVehicleModelPlugin"
+    base_class_type="kalman_filter_localization::core::VehicleModel">
+    <description>
+      Planar vehicle model with lateral NHC and unconstrained vertical velocity.
+    </description>
+  </class>
+</library>

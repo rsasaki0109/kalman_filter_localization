@@ -29,6 +29,9 @@ find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(kalman_filter_localization_msgs REQUIRED)
 # NOTE: Eigen is pulled in transitively via kalman_filter_localization_core.
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -45,12 +48,26 @@ if(BUILD_TESTING)
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
   ament_add_pytest_test(test_evaluate_localization test/test_evaluate_localization.py)
+  ament_add_pytest_test(test_typed_messages test/test_typed_messages.py)
+  ament_add_pytest_test(test_kf_doctor test/test_kf_doctor.py)
 endif()
 
 add_library(ekf_localization_component SHARED
 src/ekf_localization_component.cpp
 )
 add_library(${PROJECT_NAME}::ekf_localization_component ALIAS ekf_localization_component)
+
+add_library(kalman_filter_localization_vehicle_models SHARED
+  src/vehicle_model_plugins.cpp
+)
+target_include_directories(kalman_filter_localization_vehicle_models PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(kalman_filter_localization_vehicle_models PUBLIC
+  kalman_filter_localization_core::core
+)
+ament_target_dependencies(kalman_filter_localization_vehicle_models PUBLIC pluginlib)
 
 target_compile_definitions(ekf_localization_component PRIVATE "KFL_EKFL_BUILDING_DLL")
 target_include_directories(ekf_localization_component PUBLIC
@@ -60,7 +77,8 @@ target_include_directories(ekf_localization_component PUBLIC
 # Exported library: use keyword signature so transitive deps propagate.
 target_link_libraries(ekf_localization_component PUBLIC kalman_filter_localization_core::core)
 ament_target_dependencies(ekf_localization_component PUBLIC
-  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
+  rclcpp rclcpp_components diagnostic_msgs geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs
+  kalman_filter_localization_msgs pluginlib tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 add_executable(ekf_localization_node
 src/ekf_localization_node.cpp
@@ -70,7 +88,8 @@ target_link_libraries(ekf_localization_node
 ekf_localization_component)
 
 ament_target_dependencies(ekf_localization_node
-  rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
+  rclcpp rclcpp_components diagnostic_msgs geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs
+  kalman_filter_localization_msgs pluginlib tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 rclcpp_components_register_nodes(ekf_localization_component
   "kalman_filter_localization::EkfLocalizationComponent")
@@ -79,6 +98,11 @@ rclcpp_components_register_nodes(ekf_localization_component
 install(
   DIRECTORY "include/"
   DESTINATION include
+)
+
+install(FILES
+  kalman_filter_localization_plugins.xml
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(
@@ -138,8 +162,15 @@ install(PROGRAMS
   RENAME generate_short_bag_fixture
 )
 
+install(PROGRAMS
+  scripts/kf_doctor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME kf_doctor
+)
+
 install(TARGETS
   ekf_localization_node
+  kalman_filter_localization_vehicle_models
   DESTINATION lib/kalman_filter_localization
 )
 
@@ -164,7 +195,13 @@ ament_export_dependencies(nav_msgs)
 ament_export_dependencies(geometry_msgs)
 ament_export_dependencies(std_msgs)
 ament_export_dependencies(std_srvs)
+ament_export_dependencies(diagnostic_msgs)
+ament_export_dependencies(pluginlib)
+ament_export_dependencies(kalman_filter_localization_msgs)
 ament_export_include_directories(include)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+
+pluginlib_export_plugin_description_file(
+  kalman_filter_localization kalman_filter_localization_plugins.xml)
 
 ament_package()
