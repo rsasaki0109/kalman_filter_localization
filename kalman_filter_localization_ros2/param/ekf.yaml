@@ -20,6 +20,13 @@ ekf_localization:
       enable_measurement_replay: false
       measurement_history_duration_sec: 1.0
       max_future_measurement_wait_sec: 0.5
+      # Optional offline fixed-lag RTS smoother oracle (requires replay): publishes
+      # /ekf_localization/smoothed_pose re-conditioned on future measurements.
+      # fixed_lag_node_subsample records one node every N IMU samples, shrinking
+      # the RTS window so the backward pass stays real-time at IMU rate.
+      enable_fixed_lag_smoothing: false
+      fixed_lag_duration_sec: 5.0
+      fixed_lag_node_subsample: 1
       # gnss_navsatfix_origin_latitude: 35.0
       # gnss_navsatfix_origin_longitude: 139.0
       # gnss_navsatfix_origin_altitude: 0.0
