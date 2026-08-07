@@ -246,7 +246,12 @@ Phase 0--6 完了後、同じ benchmark で必要性を判定する。
 
 - [ ] invariant EKF/FEJ による unobservable yaw/translation の consistency 改善。
 - [ ] online wheel scale、lever arm、time offset calibration。
-- [ ] fixed-lag smoother または GTSAM を offline oracle とした EKF 誤差分析。
+- [ ] invariant EKF/FEJ による unobservable yaw/translation の consistency 改善。
+- [x] fixed-lag smoother を offline oracle とした EKF 誤差分析（`core::FixedLagSmoother`:
+      RTS backward pass、fixed-lag/batch 両対応、node subsampling で実時間動作。
+      `ekf_localization_node` に `enable_fixed_lag_smoothing` と
+      `/ekf_localization/smoothed_pose` を追加。実 bag で GT 誤差が filter
+      15.4 m → smoother 1.9 m に改善。詳細は `docs/fixed_lag_smoothing.md`）。
 - [ ] raw GNSS pseudorange/Doppler の tightly coupled fusion と RAIM/NLOS 対応。
 - [ ] LiDAR/VIO/radar velocity aid。
 

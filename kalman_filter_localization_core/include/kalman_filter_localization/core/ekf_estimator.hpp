@@ -618,8 +618,13 @@ public:
     if (!checkNumericalInvariants()) {
       x_ = state_before;
       P_ = covariance_before;
+      has_last_discrete_model_ = false;
       return PredictionUpdateStatus::kNumericalFailure;
     }
+    last_discrete_model_.transition = F;
+    last_discrete_model_.process_covariance = discrete_process_noise;
+    last_prediction_dt_ = dt_imu;
+    has_last_discrete_model_ = true;
     return PredictionUpdateStatus::kUpdated;
   }
 
@@ -1425,6 +1430,29 @@ public:
     return num_state_;
   }
 
+  // Returns the discrete transition and process-covariance matrices actually used
+  // by the most recent successful predictionUpdateDt call. This lets downstream
+  // consumers (e.g. an RTS smoother) reconstruct the linearized error dynamics
+  // consistently with the running filter.
+  bool getLastDiscreteModel(DiscreteErrorModel & model) const
+  {
+    if (!has_last_discrete_model_) {
+      return false;
+    }
+    model = last_discrete_model_;
+    return true;
+  }
+
+  double getLastPredictionDt() const
+  {
+    return last_prediction_dt_;
+  }
+
+  bool hasLastDiscreteModel() const
+  {
+    return has_last_discrete_model_;
+  }
+
 private:
   static const int num_state_{16};
   static const int num_error_state_{15};
@@ -1652,6 +1680,9 @@ private:
 
   double previous_time_imu_;
   bool has_previous_time_imu_;
+  DiscreteErrorModel last_discrete_model_{};
+  double last_prediction_dt_{0.0};
+  bool has_last_discrete_model_{false};
   double var_imu_w_;
   double var_imu_acc_;
   double var_imu_gyro_bias_;

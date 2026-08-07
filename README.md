@@ -70,6 +70,25 @@ ros2 run kalman_filter_localization kf_doctor \
   --output-profile .data/doctor/profile.yaml
 ```
 
+## Fixed-lag smoothing oracle
+
+An optional fixed-lag RTS smoother re-conditions past EKF states on the future
+measurements, giving a reference trajectory for EKF error analysis. It requires
+measurement replay and publishes `smoothed_pose`:
+
+```yaml
+enable_measurement_replay: true
+enable_fixed_lag_smoothing: true
+fixed_lag_duration_sec: 5.0
+fixed_lag_node_subsample: 10   # one node per 10 IMU samples (real-time window)
+```
+
+Output topic: `/ekf_localization/smoothed_pose` (`geometry_msgs/PoseStamped`).
+On an Applanix open-sky segment the smoothed track reduced the GNSS ground-truth
+3D error from 15.4 m (filter) to 1.9 m. See
+[`docs/fixed_lag_smoothing.md`](docs/fixed_lag_smoothing.md) for the math,
+subsampling, and integration details.
+
 The inferred IMU noise values are explicitly heuristic estimates from detected
 stationary samples. Allan variance and the calibration checklist remain the
 authoritative path for production noise parameters.

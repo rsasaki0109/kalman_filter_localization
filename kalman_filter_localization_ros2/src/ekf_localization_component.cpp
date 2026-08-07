@@ -79,6 +79,7 @@
 
 #include <kalman_filter_localization/core/ekf_estimator.hpp>
 #include <kalman_filter_localization/core/eskf_replay.hpp>
+#include <kalman_filter_localization/core/fixed_lag_smoother.hpp>
 #include <kalman_filter_localization/core/imu_initializer.hpp>
 #include <kalman_filter_localization/core/measurement_quality.hpp>
 #include <kalman_filter_localization/core/odometry.hpp>
@@ -143,6 +144,14 @@ Eigen::Vector3d getRpyRadFromQuaternion(const Eigen::Quaterniond & q_in)
 double stampToSec(const builtin_interfaces::msg::Time & stamp)
 {
   return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
+}
+
+builtin_interfaces::msg::Time stampFromSec(const double sec)
+{
+  builtin_interfaces::msg::Time stamp;
+  stamp.sec = static_cast<int32_t>(std::floor(sec));
+  stamp.nanosec = static_cast<uint32_t>((sec - std::floor(sec)) * 1e9);
+  return stamp;
 }
 
 Eigen::Matrix3d odometryPositionCovariance(
@@ -763,11 +772,12 @@ struct EkfLocalizationComponent::Impl
     drainBufferedInputs(false);
   }
 
-  bool applyInitialCovariance(
+  bool applyInitialCovarianceTo(
+    core::EKFEstimator & estimator,
     const Eigen::Vector3d & position_variance,
     const Eigen::Vector3d & attitude_variance)
   {
-    return ekf_.setInitialErrorStateCovariance(
+    return estimator.setInitialErrorStateCovariance(
       position_variance,
       Eigen::Vector3d(
         initial_velocity_variance_xy_, initial_velocity_variance_xy_,
@@ -777,15 +787,71 @@ struct EkfLocalizationComponent::Impl
       Eigen::Vector3d::Constant(initial_imu_acc_bias_covariance_));
   }
 
-  bool applyConfiguredInitialCovariance()
+  bool applyInitialCovariance(
+    const Eigen::Vector3d & position_variance,
+    const Eigen::Vector3d & attitude_variance)
   {
-    return applyInitialCovariance(
+    return applyInitialCovarianceTo(ekf_, position_variance, attitude_variance);
+  }
+
+  bool applyConfiguredInitialCovarianceTo(core::EKFEstimator & estimator)
+  {
+    return applyInitialCovarianceTo(
+      estimator,
       Eigen::Vector3d(
         initial_position_variance_xy_, initial_position_variance_xy_,
         initial_position_variance_z_),
       Eigen::Vector3d(
         initial_attitude_variance_rp_, initial_attitude_variance_rp_,
         initial_attitude_variance_yaw_));
+  }
+
+  bool applyConfiguredInitialCovariance()
+  {
+    return applyConfiguredInitialCovarianceTo(ekf_);
+  }
+
+  // Applies the process-model, noise, bias, gravity, and initial-covariance
+  // settings to an estimator. The node's main EKF and the fixed-lag smoother run
+  // with identical dynamics so the oracle sees the same model as the filter.
+  void configureEstimator(
+    core::EKFEstimator & estimator,
+    const core::EKFEstimator::PropagationModel propagation_model)
+  {
+    estimator.setVarImuGyro(var_imu_w_);
+    estimator.setVarImuAcc(var_imu_acc_);
+    estimator.setPropagationModel(propagation_model);
+    estimator.setVarImuGyroBias(var_imu_gyro_bias_);
+    if (!estimator.setInitialGyroBiasCovariance(initial_imu_gyro_bias_covariance_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter initial_imu_gyro_bias_covariance=%f. fallback to default=0.0",
+        initial_imu_gyro_bias_covariance_);
+    }
+    estimator.setTauGyroBias(tau_gyro_bias_sec_);
+    estimator.setVarImuAccBias(var_imu_acc_bias_);
+    if (!estimator.setInitialAccelBiasCovariance(initial_imu_acc_bias_covariance_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter initial_imu_acc_bias_covariance=%f. fallback to default=0.0",
+        initial_imu_acc_bias_covariance_);
+    }
+    estimator.setTauAccBias(tau_acc_bias_sec_);
+    if (!estimator.setMaxPredictionDtSec(max_imu_dt_sec_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter max_imu_dt_sec=%f. fallback to default=%f",
+        max_imu_dt_sec_, estimator.getMaxPredictionDtSec());
+    }
+    if (!estimator.setGravityZ(gravity_mps2_)) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "invalid parameter gravity_mps2=%f. fallback to default=%f",
+        gravity_mps2_, estimator.getGravityZ());
+    }
+    if (!applyConfiguredInitialCovarianceTo(estimator)) {
+      throw std::invalid_argument("failed to apply configured initial covariance");
+    }
   }
 
   void init()
@@ -865,6 +931,12 @@ struct EkfLocalizationComponent::Impl
     node_.declare_parameter("max_future_measurement_wait_sec", 0.5);
     node_.get_parameter(
       "max_future_measurement_wait_sec", max_future_measurement_wait_sec_);
+    node_.declare_parameter("enable_fixed_lag_smoothing", false);
+    node_.get_parameter("enable_fixed_lag_smoothing", enable_fixed_lag_smoothing_);
+    node_.declare_parameter("fixed_lag_duration_sec", 5.0);
+    node_.get_parameter("fixed_lag_duration_sec", fixed_lag_duration_sec_);
+    node_.declare_parameter("fixed_lag_node_subsample", 1);
+    node_.get_parameter("fixed_lag_node_subsample", fixed_lag_node_subsample_);
     node_.declare_parameter("var_imu_w", 0.01);
     node_.get_parameter("var_imu_w", var_imu_w_);
     node_.declare_parameter("var_imu_acc", 0.01);
@@ -1867,6 +1939,26 @@ struct EkfLocalizationComponent::Impl
     RCLCPP_INFO(
       node_.get_logger(), "vehicle model: plugin='%s' model='%s'",
       vehicle_model_plugin_.c_str(), vehicle_model_->name().c_str());
+    // Private vehicle model / stationary detector for the fixed-lag smoothing
+    // forward track so per-IMU corrections run independently of the main filter.
+    if (enable_fixed_lag_smoothing_) {
+      try {
+        smoother_vehicle_model_ =
+          vehicle_model_loader_.createSharedInstance(vehicle_model_plugin_);
+      } catch (const pluginlib::PluginlibException & exception) {
+        throw std::invalid_argument(
+                std::string("failed to load smoother vehicle_model_plugin='") +
+                vehicle_model_plugin_ + "': " + exception.what());
+      }
+      if (!smoother_vehicle_model_ ||
+        !smoother_vehicle_model_->configure(vehicle_model_config))
+      {
+        throw std::invalid_argument(
+                std::string("smoother vehicle model plugin rejected configuration: ") +
+                (smoother_vehicle_model_ ? smoother_vehicle_model_->name() : std::string("null")));
+      }
+      smoother_stationary_detector_ = core::StationaryDetector(stationary_config);
+    }
     core::GnssReacquisitionGate::Config reacquisition_config;
     reacquisition_config.outage_duration_sec = gnss_position_reacquisition_dt_sec_ > 0.0 ?
       gnss_position_reacquisition_dt_sec_ : 1.0;
@@ -1931,37 +2023,21 @@ struct EkfLocalizationComponent::Impl
       throw std::invalid_argument(
               "propagation_model must be one of: legacy, fast, exact");
     }
-    ekf_.setPropagationModel(propagation_model);
-    ekf_.setVarImuGyroBias(var_imu_gyro_bias_);
-    if (!ekf_.setInitialGyroBiasCovariance(initial_imu_gyro_bias_covariance_)) {
-      RCLCPP_WARN(
-        node_.get_logger(),
-        "invalid parameter initial_imu_gyro_bias_covariance=%f. fallback to default=0.0",
-        initial_imu_gyro_bias_covariance_);
-    }
-    ekf_.setTauGyroBias(tau_gyro_bias_sec_);
-    ekf_.setVarImuAccBias(var_imu_acc_bias_);
-    if (!ekf_.setInitialAccelBiasCovariance(initial_imu_acc_bias_covariance_)) {
-      RCLCPP_WARN(
-        node_.get_logger(),
-        "invalid parameter initial_imu_acc_bias_covariance=%f. fallback to default=0.0",
-        initial_imu_acc_bias_covariance_);
-    }
-    ekf_.setTauAccBias(tau_acc_bias_sec_);
-    if (!ekf_.setMaxPredictionDtSec(max_imu_dt_sec_)) {
-      RCLCPP_WARN(
-        node_.get_logger(),
-        "invalid parameter max_imu_dt_sec=%f. fallback to default=%f",
-        max_imu_dt_sec_, ekf_.getMaxPredictionDtSec());
-    }
-    if (!ekf_.setGravityZ(gravity_mps2_)) {
-      RCLCPP_WARN(
-        node_.get_logger(),
-        "invalid parameter gravity_mps2=%f. fallback to default=%f",
-        gravity_mps2_, ekf_.getGravityZ());
-    }
-    if (!applyConfiguredInitialCovariance()) {
-      throw std::invalid_argument("failed to apply configured initial covariance");
+    configureEstimator(ekf_, propagation_model);
+    configureEstimator(smoother_ekf_, propagation_model);
+    if (enable_fixed_lag_smoothing_) {
+      if (!(fixed_lag_duration_sec_ > 0.0) || !std::isfinite(fixed_lag_duration_sec_)) {
+        throw std::invalid_argument("fixed_lag_duration_sec must be finite and positive");
+      }
+      if (!enable_measurement_replay_) {
+        RCLCPP_WARN(
+          node_.get_logger(),
+          "enable_fixed_lag_smoothing requires enable_measurement_replay=true; "
+          "smoother output is disabled without the in-order sensor-time measurement feed");
+      }
+      smoother_ = std::make_unique<core::FixedLagSmoother>(
+        smoother_ekf_, fixed_lag_duration_sec_, max_future_measurement_wait_sec_,
+        static_cast<std::size_t>(std::max(fixed_lag_node_subsample_, 1)));
     }
     var_gnss_ << var_gnss_xy_, var_gnss_xy_, var_gnss_z_;
     var_gnss_velocity_ << var_gnss_velocity_xy_, var_gnss_velocity_xy_, var_gnss_velocity_z_;
@@ -1976,6 +2052,12 @@ struct EkfLocalizationComponent::Impl
       output_pose_name, rclcpp::QoS(output_qos_depth_));
     current_odometry_pub_ =
       node_.create_publisher<nav_msgs::msg::Odometry>(output_odometry_topic_, 10);
+    if (enable_fixed_lag_smoothing_) {
+      const std::string smoothed_pose_name = node_.get_name() + std::string("/smoothed_pose");
+      smoothed_pose_pub_ =
+        node_.create_publisher<geometry_msgs::msg::PoseStamped>(
+        smoothed_pose_name, rclcpp::QoS(output_qos_depth_));
+    }
     if (publish_tf_) {
       tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
     }
@@ -2051,6 +2133,10 @@ struct EkfLocalizationComponent::Impl
           current_pose_.pose.orientation.y,
           current_pose_.pose.orientation.z);
         ekf_.setState(state);
+        if (smoother_) {
+          smoother_ekf_.setState(state);
+          smoother_->reset();
+        }
         const bool covariance_applied = use_message_covariance ?
           applyInitialCovariance(
           Eigen::Vector3d(
@@ -2650,8 +2736,22 @@ struct EkfLocalizationComponent::Impl
   core::EskfReplay::MeasurementFunction makeImuReplayCorrection(
     const sensor_msgs::msg::Imu & imu_msg, const double sensor_time)
   {
+    return makeImuCorrection(imu_msg, sensor_time, stationary_detector_, *vehicle_model_);
+  }
+
+  // Builds a per-IMU correction function (orientation / flat-ground / NHC /
+  // ZUPT / ZIHR / bias-observability gating) against a caller-provided
+  // stationary detector and vehicle model. The main replay track uses the
+  // node's shared detector/model; the fixed-lag smoothing track uses its own
+  // private instances so the two forward runs stay independent.
+  core::EskfReplay::MeasurementFunction makeImuCorrection(
+    const sensor_msgs::msg::Imu & imu_msg, const double sensor_time,
+    core::StationaryDetector & stationary_detector,
+    core::VehicleModel & vehicle_model)
+  {
     const auto plan = std::make_shared<ImuReplayPlan>();
-    return [this, imu_msg, sensor_time, plan](core::EKFEstimator & estimator) {
+    return [this, imu_msg, sensor_time, plan, &stationary_detector,
+             &vehicle_model](core::EKFEstimator & estimator) {
              using UpdateStatus = core::EKFEstimator::ObservationUpdateStatus;
              UpdateStatus status = UpdateStatus::kUpdated;
              const Eigen::Vector3d angular_velocity(
@@ -2661,7 +2761,7 @@ struct EkfLocalizationComponent::Impl
                imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y,
                imu_msg.linear_acceleration.z);
              if (!plan->initialized) {
-               const auto stationary_state = stationary_detector_.update(
+               const auto stationary_state = stationary_detector.update(
                  sensor_time, angular_velocity, acceleration,
                  estimator.getVelocity().norm(), gravity_mps2_);
                plan->apply_zupt = use_zupt_ &&
@@ -2676,7 +2776,7 @@ struct EkfLocalizationComponent::Impl
                vehicle_model_input.body_velocity = body_velocity;
                vehicle_model_input.yaw_rate_radps = imu_msg.angular_velocity.z;
                vehicle_model_input.lateral_acceleration_mps2 = imu_msg.linear_acceleration.y;
-               const auto vehicle_model_output = vehicle_model_->evaluate(vehicle_model_input);
+               const auto vehicle_model_output = vehicle_model.evaluate(vehicle_model_input);
                plan->apply_nhc = vehicle_model_output.valid &&
                  vehicle_model_output.apply_nonholonomic_constraint &&
                  std::isfinite(vehicle_model_output.nhc_variance_scale) &&
@@ -2760,6 +2860,22 @@ struct EkfLocalizationComponent::Impl
            };
   }
 
+  void feedSmootherMeasurement(
+    const double sensor_time, const std::uint64_t measurement_id,
+    const core::EskfReplay::Status replay_status,
+    const core::EskfReplay::MeasurementFunction & update)
+  {
+    if (!smoother_ || !enable_fixed_lag_smoothing_) {
+      return;
+    }
+    if (replay_status != core::EskfReplay::Status::kApplied &&
+      replay_status != core::EskfReplay::Status::kQueuedFuture)
+    {
+      return;
+    }
+    (void)smoother_->applyMeasurement(sensor_time, measurement_id, update);
+  }
+
   core::EskfReplay::Status applyReplayMeasurement(
     const builtin_interfaces::msg::Time & stamp, const std::uint8_t source,
     core::EskfReplay::MeasurementFunction update, const double time_offset_sec = 0.0)
@@ -2769,8 +2885,10 @@ struct EkfLocalizationComponent::Impl
     const std::uint64_t stamp_bits = static_cast<std::uint64_t>(stampToNanoseconds(stamp));
     const std::uint64_t measurement_id =
       (static_cast<std::uint64_t>(source) << 56U) ^ stamp_bits;
+    const auto smoother_update = update;
     const auto status = replay_->applyMeasurement(
       sensor_time, arrival_time, measurement_id, std::move(update));
+    feedSmootherMeasurement(sensor_time, measurement_id, status, smoother_update);
     if (debug_replay_timing_pub_) {
       const auto & trace = replay_->lastTimingTrace();
       std_msgs::msg::Float64MultiArray message;
@@ -2837,6 +2955,10 @@ struct EkfLocalizationComponent::Impl
         state.velocity.setZero();
         state.gyro_bias = result.gyro_bias;
         ekf_.setState(state);
+        if (smoother_) {
+          smoother_ekf_.setState(state);
+          smoother_->reset();
+        }
         has_previous_time_imu_ = false;
         previous_time_imu_ = 0.0;
         replay_->reset();
@@ -2869,6 +2991,28 @@ struct EkfLocalizationComponent::Impl
         current_time_imu, gyro, linear_acceleration,
         first_sample ? core::EskfReplay::MeasurementFunction{} :
         makeImuReplayCorrection(imu_msg, current_time_imu));
+      if (smoother_ && enable_fixed_lag_smoothing_) {
+        const bool smoother_first = smoother_->counters().imu_samples == 0U;
+        const auto smoother_status = smoother_->addImu(
+          current_time_imu, gyro, linear_acceleration,
+          smoother_first ? core::EskfReplay::MeasurementFunction{} :
+          makeImuCorrection(
+            imu_msg, current_time_imu, smoother_stationary_detector_,
+            *smoother_vehicle_model_));
+        if (smoother_status != core::FixedLagSmoother::Status::kApplied &&
+          smoother_status != core::FixedLagSmoother::Status::kInitialized &&
+          smoother_status != core::FixedLagSmoother::Status::kEmitted)
+        {
+          RCLCPP_WARN_THROTTLE(
+            node_.get_logger(), clock_, 5000,
+            "smoother IMU rejected: status=%d imu_samples=%llu time=%.9f latest=%.9f "
+            "max_dt=%f",
+            static_cast<int>(smoother_status),
+            static_cast<std::uint64_t>(smoother_->counters().imu_samples),
+            current_time_imu, smoother_->latestTime(),
+            smoother_ekf_.getMaxPredictionDtSec());
+        }
+      }
       if (status == core::EskfReplay::Status::kInitialized ||
         status == core::EskfReplay::Status::kApplied)
       {
@@ -4391,6 +4535,35 @@ struct EkfLocalizationComponent::Impl
       std::fabs(dyaw), raw_nis, computeYawNis(dyaw, yaw_variance, covariance));
   }
 
+  void publishSmoothedPose()
+  {
+    core::FixedLagSmoother::SmoothedNode node;
+    std::size_t published = 0;
+    while (smoother_->popSmoothed(node)) {
+      published++;
+      smoothed_pose_.header.stamp = stampFromSec(node.time);
+      smoothed_pose_.header.frame_id = reference_frame_id_;
+      smoothed_pose_.pose.position.x = node.state.position.x();
+      smoothed_pose_.pose.position.y = node.state.position.y();
+      smoothed_pose_.pose.position.z = node.state.position.z();
+      smoothed_pose_.pose.orientation.x = node.state.orientation.x();
+      smoothed_pose_.pose.orientation.y = node.state.orientation.y();
+      smoothed_pose_.pose.orientation.z = node.state.orientation.z();
+      smoothed_pose_.pose.orientation.w = node.state.orientation.w();
+      smoothed_pose_pub_->publish(smoothed_pose_);
+    }
+    if (published > 0U) {
+      RCLCPP_INFO_THROTTLE(
+        node_.get_logger(), clock_, 5000,
+        "published %zu smoothed poses; smoother nodes=%zu counters={imu=%llu "
+        "applied=%llu emitted=%llu}",
+        published, smoother_->nodeCount(),
+        static_cast<std::uint64_t>(smoother_->counters().imu_samples),
+        static_cast<std::uint64_t>(smoother_->counters().measurements_applied),
+        static_cast<std::uint64_t>(smoother_->counters().smoothed_emitted));
+    }
+  }
+
   void broadcastPose()
   {
     if (!initial_pose_received_ || !has_received_input_) {
@@ -4419,6 +4592,9 @@ struct EkfLocalizationComponent::Impl
     current_pose_pub_->publish(current_pose_);
     ++published_pose_count_;
 
+    if (smoother_ && smoothed_pose_pub_) {
+      publishSmoothedPose();
+    }
     const auto state = ekf_.getState();
     const Eigen::MatrixXd covariance = ekf_.getCovariance();
     nav_msgs::msg::Odometry odometry_msg;
@@ -4512,6 +4688,9 @@ struct EkfLocalizationComponent::Impl
   bool enable_measurement_replay_{false};
   double measurement_history_duration_sec_{1.0};
   double max_future_measurement_wait_sec_{0.5};
+  bool enable_fixed_lag_smoothing_{false};
+  double fixed_lag_duration_sec_{5.0};
+  int fixed_lag_node_subsample_{1};
 
   double var_imu_w_{0.0};
   double var_imu_acc_{0.0};
@@ -4698,6 +4877,7 @@ struct EkfLocalizationComponent::Impl
   input_reorder_queue_;
 
   geometry_msgs::msg::PoseStamped current_pose_;
+  geometry_msgs::msg::PoseStamped smoothed_pose_;
   rclcpp::Time current_stamp_;
   rclcpp::Time latest_imu_stamp_;
 
@@ -4734,6 +4914,10 @@ struct EkfLocalizationComponent::Impl
   std::shared_ptr<core::VehicleModel> vehicle_model_;
   bool stationary_initialization_complete_{false};
   std::unique_ptr<core::EskfReplay> replay_;
+  core::EKFEstimator smoother_ekf_;
+  std::unique_ptr<core::FixedLagSmoother> smoother_;
+  core::StationaryDetector smoother_stationary_detector_;
+  std::shared_ptr<core::VehicleModel> smoother_vehicle_model_;
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_initial_pose_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
@@ -4748,6 +4932,7 @@ struct EkfLocalizationComponent::Impl
     sub_wheel_speed_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr drain_input_buffer_service_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr smoothed_pose_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr current_odometry_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_gyro_bias_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr current_accel_bias_pub_;
